@@ -310,6 +310,17 @@ impl Operations for Controller {
         });
     }
 
+    /// Drops the files let go over a web page on the page, where they were let go.
+    fn browser_files_dropped(&self, paths: Vec<PathBuf>, at: (f32, f32)) {
+        self.with(|app| {
+            let paths = paths
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect();
+            app.browser_files_dropped(paths, at);
+        });
+    }
+
     /// Makes the window an icon on the desktop's bar.
     fn minimize_window(&self) {
         self.with(App::minimize_window);

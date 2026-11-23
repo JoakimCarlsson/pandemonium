@@ -1603,7 +1603,7 @@ server hosts on its loopback address; the server hands each call to a window.
   `browser_back`, `browser_forward`, `browser_reload`, `browser_evaluate`,
   `browser_console`, `browser_network`, `browser_wait`, `browser_handle_dialog`,
   `browser_hover`, `browser_drag`, `browser_fill_form`, `browser_highlight`,
-  `browser_get_bounding_box` and `browser_resize`; `arguments` is the JSON the
+  `browser_get_bounding_box`, `browser_resize` and `browser_record`; `arguments` is the JSON the
   agent gave. `browser_screenshot` also takes `full_page`, or `ref` or
   `selector` for one element. The schema of each tool is in
   `crates/pm-server/src/browser_tools.rs`; how the helper runs them is in

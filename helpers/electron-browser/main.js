@@ -10,14 +10,18 @@
 const { app, dialog } = require('electron');
 const net = require('net');
 const path = require('path');
+const blocker = require('./src/blocker');
 const chrome = require('./src/chrome');
 const { holdNativeBoxes } = require('./src/dialogs');
 const origins = require('./src/origins');
+const passwords = require('./src/passwords');
 const { Page } = require('./src/page');
 const safety = require('./src/safety');
 const sealed = require('./src/sealed');
 const features = require('./src/features');
 const lifecycle = require('./src/lifecycle');
+const partitions = require('./src/partitions');
+const recording = require('./src/recording');
 const { LineReader } = require('./src/lines');
 
 /** @typedef {import('./src/types').Event} Event */
@@ -50,6 +54,7 @@ if (profileFolder) {
   app.setPath('userData', path.join(profileFolder, 'electron'));
 }
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+app.commandLine.appendSwitch('disable-features', 'WaylandFractionalScaleV1');
 
 /**
  * The socket to the window, once connected.
@@ -117,9 +122,10 @@ function adoptPopup(body) {
     send,
     inspectable: true,
     window: taken.win,
+    partition: partitions.partitionOf(taken.win.webContents.session),
   });
   pages.set(body.page, page);
-  safety.watch(page);
+  watchWeb(page);
   page.handle({ Resize: { page: body.page, width: body.width, height: body.height, scale: body.scale } });
   const url = page.contents.getURL();
   if (url) send({ Address: { page: body.page, url } });
@@ -127,6 +133,19 @@ function adoptPopup(body) {
   send({ Loading: { page: body.page, loading: page.contents.isLoading(), progress: 0.5 } });
   lifecycle.reportHistory(page);
   page.contents.invalidate();
+}
+
+/**
+ * Starts following a page of the web for what the reader is asked and told about it: permissions, certificates and
+ * downloads, the ads and trackers it blocks, and the logins it sends.
+ * @param {Page} page The page.
+ * @returns {void}
+ */
+function watchWeb(page) {
+  page.rewatch = watchWeb;
+  safety.watch(page);
+  blocker.watch(page);
+  passwords.watch(page);
 }
 
 /**
@@ -139,7 +158,10 @@ function handle(request) {
     app.quit();
     return;
   }
-  if ('AgentOrigins' in request) {
+  if ('Privacy' in request) {
+    blocker.setEnabled(request.Privacy.block_trackers === true, pages.values());
+    passwords.setEnabled(request.Privacy.save_passwords === true, pages.values());
+  } else if ('AgentOrigins' in request) {
     origins.setPolicy(request.AgentOrigins.restrict, request.AgentOrigins.origins);
   } else if ('PermissionAnswer' in request) {
     safety.answerPermission(request.PermissionAnswer.id, request.PermissionAnswer.allow);
@@ -148,9 +170,18 @@ function handle(request) {
     if (page) safety.chooseCertificate(page, request.CertificateChoice.proceed);
   } else if ('Open' in request) {
     const body = request.Open;
-    const page = new Page({ id: body.page, width: body.width, height: body.height, scale: body.scale, folder: surfacesFolder, send, inspectable: true });
+    const page = new Page({
+      id: body.page,
+      width: body.width,
+      height: body.height,
+      scale: body.scale,
+      folder: surfacesFolder,
+      send,
+      inspectable: true,
+      partition: body.partition || '',
+    });
     pages.set(body.page, page);
-    safety.watch(page);
+    watchWeb(page);
     page.load(body.url);
   } else if ('OpenHtml' in request) {
     const body = request.OpenHtml;
@@ -186,7 +217,12 @@ function handle(request) {
       safety.forget(request.Close.page);
       page.close();
       pages.delete(request.Close.page);
+      partitions.release(page.partition, pages.values());
     }
+  } else if ('RecordStep' in request && !pages.has(request.RecordStep.page)) {
+    const body = request.RecordStep;
+    const caller = { session: body.session || '', name: body.session_name || '' };
+    recording.afterTool(null, body.tool, body.arguments, { ok: body.ok === true, text: String(body.text || ''), image: null }, caller);
   } else {
     const page = pages.get(bodyOf(request).page);
     if (page) page.handle(request);
@@ -210,6 +246,9 @@ app.whenReady().then(() => {
   holdNativeBoxes(dialog);
   safety.install({ send, pageOf });
   chrome.install(pageOf);
+  const profile = profileFolder || app.getPath('userData');
+  blocker.install({ profile, pageOf });
+  passwords.install({ profile, pageOf });
   if (process.platform === 'darwin') app.dock?.hide();
   const separator = controlPath.lastIndexOf(':');
   const connection = net.createConnection({

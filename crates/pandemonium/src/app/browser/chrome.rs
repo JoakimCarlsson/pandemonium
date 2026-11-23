@@ -1,4 +1,4 @@
-//! What the pane shows around each page from what the page reports, and what the reader does with it: dialogs, the menu of a right click, downloads, full screen, sound, the link under the pointer, tooltips, sharing the screen, printing, the zoom each site was left at, the addresses visited and the shortcuts that reach them.
+//! What the pane shows around each page from what the page reports, and what the reader does with it: dialogs, the menu of a right click, downloads, saving the page, whether reader view can show it, full screen, sound, the link under the pointer, tooltips, sharing the screen, printing, the zoom each site was left at, the ads and trackers blocked, the logins offered to be saved and filled in, the addresses visited and the shortcuts that reach them.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -11,6 +11,7 @@ use pm_components::browser_chrome::{
     ChromeAction, DialogKind, DownloadEntry, DownloadStatus, PageMenu, ScreenAsk,
 };
 use pm_components::browser_keys::{Shortcut, escape_of, shortcut_of};
+use pm_components::browser_privacy::{LoginChoices, PasswordAsk, PrimaryAsk};
 use pm_components::browser_safety::{Download, Saving};
 use pm_components::state::WorkspaceState;
 use pm_components::target::Target;
@@ -77,6 +78,13 @@ pub(super) fn page_action_of(action: ChromeAction) -> PageAction {
         ChromeAction::Print => PageAction::Print,
         ChromeAction::ChooseScreen { id, source } => PageAction::ChooseScreen { id, source },
         ChromeAction::SetZoom(factor) => PageAction::SetZoom { factor },
+        ChromeAction::AnswerPassword { id, save, never } => {
+            PageAction::AnswerPassword { id, save, never }
+        }
+        ChromeAction::FillLogin(username) => PageAction::FillLogin { username },
+        ChromeAction::SiteBlocking(on) => PageAction::SiteBlocking { on },
+        ChromeAction::SavePage => PageAction::SavePage,
+        ChromeAction::PrimaryPassword(password) => PageAction::PrimaryPassword { password },
     }
 }
 
@@ -187,7 +195,21 @@ impl App {
             })
             .into_iter()
             .collect();
-        for (id, reports) in reports.into_iter().chain(tools) {
+        let readers: Vec<(u32, Vec<PageReport>)> = self
+            .web
+            .readers
+            .iter()
+            .map(|(id, reader)| {
+                let kept = reader
+                    .view
+                    .take_reports()
+                    .into_iter()
+                    .filter(|report| matches!(report, PageReport::ContextMenu(_)))
+                    .collect();
+                (*id, kept)
+            })
+            .collect();
+        for (id, reports) in reports.into_iter().chain(tools).chain(readers) {
             for report in reports {
                 self.browser_chrome_report(id, report);
             }
@@ -222,6 +244,26 @@ impl App {
                         .request_focus(Target::Browser(BrowserEvent::BrowserDialogField));
                 }
             }
+            PageReport::Article(article) => self.browser_article(tab, *article),
+            PageReport::PrimaryPassword(ask) => {
+                let mut shown = false;
+                self.model.update(|state| {
+                    state.browser_scoped_to_tab(tab, |state| {
+                        state.browser_primary_asked(
+                            tab,
+                            Some(PrimaryAsk::new(ask.create, &ask.origin, &ask.problem)),
+                        );
+                    });
+                    shown = state
+                        .browser
+                        .as_ref()
+                        .is_some_and(|browser| browser.active_id() == tab);
+                });
+                if shown {
+                    self.focus
+                        .request_focus(Target::Browser(BrowserEvent::BrowserPrimaryField));
+                }
+            }
             PageReport::HoveredLink { url } => {
                 let host = self.browser_tab_host(tab);
                 let url = if url.is_empty() {
@@ -253,8 +295,37 @@ impl App {
                 PageReport::ScreenShareCancelled { id } => {
                     state.browser_screen_asked(tab, None, id)
                 }
+                PageReport::Blocking { on, blocked } => state.browser_blocking(tab, on, blocked),
+                PageReport::OfferPassword(offer) => state.browser_password_offered(
+                    tab,
+                    Some(PasswordAsk {
+                        id: offer.id,
+                        origin: offer.origin,
+                        username: offer.username,
+                        update: offer.update,
+                    }),
+                    0,
+                ),
+                PageReport::PasswordOfferClosed { id } => {
+                    state.browser_password_offered(tab, None, id)
+                }
+                PageReport::LoginField(field) => state.browser_login_field(
+                    tab,
+                    Some(LoginChoices {
+                        x: field.x as f32,
+                        y: field.y as f32,
+                        width: field.width as f32,
+                        height: field.height as f32,
+                        usernames: field.usernames,
+                    }),
+                ),
+                PageReport::LoginFieldLeft => state.browser_login_field(tab, None),
+                PageReport::Readable { readable } => state.browser_readable(tab, readable),
+                PageReport::PrimaryPasswordClosed => state.browser_primary_asked(tab, None),
                 PageReport::ContextMenu(_)
                 | PageReport::Dialog(_)
+                | PageReport::PrimaryPassword(_)
+                | PageReport::Article(_)
                 | PageReport::HoveredLink { .. } => {}
             }),
         }
@@ -314,13 +385,25 @@ impl App {
             .change(|state| state.with_page_menu(tab, context, at));
     }
 
-    /// Puts back the zoom the reader left each page's site at when the page goes to another site, remembers the zoom the reader gives a site, and records the addresses visited.
+    /// Puts back the zoom the reader left each page's site at when the page goes to another site, remembers the zoom the reader gives a site, and records the addresses visited; a private tab's page takes no part, so nothing it visits or zooms is remembered.
     fn browser_chrome_sites(&mut self) {
+        let private: Vec<u32> = self.model.read(|state| {
+            self.web
+                .pages
+                .keys()
+                .copied()
+                .filter(|id| {
+                    state
+                        .browser_tab_anywhere(*id)
+                        .is_some_and(|tab| tab.private)
+                })
+                .collect()
+        });
         let ids: Vec<u32> = self
             .web
             .pages
             .iter()
-            .filter(|(_, shown)| !shown.sealed)
+            .filter(|(id, shown)| !shown.sealed && !private.contains(id))
             .map(|(id, _)| *id)
             .collect();
         self.web
@@ -465,9 +548,25 @@ impl App {
         }
     }
 
-    /// Takes a key the browser gives the pane around the page while the page has the keyboard, and says whether it did: Escape and Enter answer the sheet of a dialog, which keeps every other key from the stopped page; Escape takes the page out of full screen or stops it loading; Control or Command L and F6 go to the address bar.
+    /// Takes a key the browser gives the pane around the page while the page has the keyboard, and says whether it did: Escape and Enter answer the sheet of a dialog, which keeps every other key from the stopped page; while the sheet asking for the primary password is open, Escape turns it down and every other key goes back to its line; Escape takes the page out of full screen or stops it loading; Control or Command L and F6 go to the address bar.
     pub(super) fn browser_chrome_key(&mut self, event: &KeyEvent) -> bool {
         let focused = self.focus.focused();
+        if matches!(
+            focused,
+            Some(Target::Browser(
+                BrowserEvent::BrowserPrimaryField | BrowserEvent::BrowserPrimaryConfirm
+            ))
+        ) {
+            let plain = !event.modifiers.ctrl && !event.modifiers.meta && !event.modifiers.alt;
+            if matches!(event.key, Key::Escape) && plain {
+                self.model
+                    .update(|state| state.browser_primary_answered(false));
+                self.focus
+                    .request_focus(Target::Browser(BrowserEvent::BrowserBody));
+                return true;
+            }
+            return false;
+        }
         if focused == Some(Target::Browser(BrowserEvent::BrowserDialogField)) {
             let plain = !event.modifiers.ctrl && !event.modifiers.meta && !event.modifiers.alt;
             if matches!(event.key, Key::Escape) && plain {
@@ -481,6 +580,18 @@ impl App {
         }
         if focused != Some(Target::Browser(BrowserEvent::BrowserBody)) {
             return false;
+        }
+        if self.model.read(|state| state.browser_primary_open()) {
+            let plain = !event.modifiers.ctrl && !event.modifiers.meta && !event.modifiers.alt;
+            match event.key {
+                Key::Escape if plain => self
+                    .model
+                    .update(|state| state.browser_primary_answered(false)),
+                _ => self
+                    .focus
+                    .request_focus(Target::Browser(BrowserEvent::BrowserPrimaryField)),
+            }
+            return true;
         }
         if self
             .model

@@ -5,9 +5,12 @@
   "main": "main.js",
   "type": "commonjs",
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test test/",
+    "e2e": "node --test --test-concurrency=1 e2e/"
   },
   "dependencies": {
+    "@ghostery/adblocker-electron": "^2.20.3",
+    "@mozilla/readability": "^0.6.0",
     "electron": "^45.0.0"
   },
   "private": true,

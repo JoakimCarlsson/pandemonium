@@ -5,8 +5,8 @@ use pm_components::target::Target;
 use std::time::{Duration, Instant};
 
 use pm_browser::{
-    Button as Mouse, CaptureKind, Cursor as Shape, DownloadState, EditAction, Engine, Error,
-    Modifiers as Held, Notice, PickedElement, View, ZoomAction,
+    Button as Mouse, Caller, CaptureKind, Cursor as Shape, DownloadState, EditAction, Engine,
+    Error, Modifiers as Held, Notice, PickedElement, View, ZoomAction,
 };
 use pm_components::browser::{Command, Pointer, ZoomStep};
 use pm_components::browser_keys::{Shortcut, shortcut_of};
@@ -30,6 +30,8 @@ use rustle::Rect;
 use super::{App, browser_keys};
 
 mod chrome;
+mod reader;
+mod steps;
 
 /// How often the engine is given time to work while a page is open.
 pub(super) const PUMP: Duration = Duration::from_millis(4);
@@ -47,12 +49,16 @@ pub(super) struct Web {
     engine: Option<Engine>,
     /// The page of each tab of the browser that has one, by the tab's number.
     pages: std::collections::HashMap<u32, Shown>,
+    /// The article shown in reader view in place of the page, by the number of its tab, in the tabs that show one.
+    readers: std::collections::HashMap<u32, reader::Reader>,
     /// The developer tools, with the number of the tab whose page they are of, while they are open.
     tools: Option<(u32, View)>,
     /// The size the window of the tools was last given, in logical pixels, and the scale.
     tools_sized: Option<(u32, u32, f32)>,
     /// The newest frame of the tools that was handed to the window.
     tools_shown: u64,
+    /// The generation of the picture last made of the tools' frames.
+    tools_picture: u64,
     /// The texture every frame of the page shown is drawn into, and the tools' one.
     textures: [rustle::ImageKey; 2],
     /// Whether the primary, the secondary and the middle button went down on a page and are
@@ -91,6 +97,8 @@ pub(super) struct Web {
     forwards: std::collections::HashMap<(String, u16), u16>,
     /// The restriction on agent browsing and the origins listed, as the helper was last told.
     sent_origins: Option<(bool, Vec<String>)>,
+    /// Whether ads and trackers are blocked and logins offered to be saved, as the helper was last told.
+    sent_privacy: Option<(bool, bool)>,
     /// The number the last render of a sealed document got in this window.
     next_render: u64,
     /// The renders of sealed documents the helper is at, by this window's number: the key the picture is kept under and the width of the viewport it is rendered at, in CSS pixels.
@@ -119,6 +127,8 @@ struct Shown {
     sized: Option<(u32, u32, f32)>,
     /// The newest frame of the page that was handed to the window.
     shown: u64,
+    /// The generation of the picture last made of the page's frames.
+    picture: u64,
     /// Whether the page shows a sealed document, which is never sent to an address.
     sealed: bool,
     /// When a sealed page was opened, until it first painted; one that does not paint within [`pm_browser::render::ANSWER_WITHIN`] is given up on.
@@ -136,6 +146,35 @@ fn still_outdated() -> String {
     )
 }
 
+/// The picture of `frame` as a generation of `texture`, in the byte order the page painted it. When `last`, the frame
+/// and the picture last made of the page, is the picture the frame says it changed from, the picture says only the
+/// changed part differs from it, so the renderer uploads only that part while its texture still holds that picture.
+pub(crate) fn frame_picture(
+    texture: rustle::ImageKey,
+    frame: &pm_browser::Frame,
+    last: (u64, u64),
+) -> Option<ImageData> {
+    let format = if frame.bgra {
+        rustle::PixelFormat::Bgra8
+    } else {
+        rustle::PixelFormat::Rgba8
+    };
+    let image = ImageData::keyed_as(
+        texture,
+        frame.width,
+        frame.height,
+        frame.pixels.clone(),
+        format,
+    )?;
+    Some(match frame.changed {
+        Some((since, region)) if since == last.0 && last.1 != 0 => image.changed_since(
+            last.1,
+            rustle::PixelRect::new(region.x, region.y, region.width, region.height),
+        ),
+        _ => image,
+    })
+}
+
 /// The picture the helper rendered of a sealed document into the file at `path`, at a viewport `width` CSS pixels wide, or why it cannot be shown.
 fn preview_drawing(path: &std::path::Path, width: u32) -> Result<Drawing, String> {
     let bytes =
@@ -143,6 +182,14 @@ fn preview_drawing(path: &std::path::Path, width: u32) -> Result<Drawing, String
     let picture = crate::work::picture::decode(&bytes, false)?;
     let density = (picture.width() as f32 / width.max(1) as f32).max(1.0);
     Ok(Drawing { picture, density })
+}
+
+/// The agent session that holds the browser of `scope` and is called `title`, as the helper keeps recordings by: the scope names the session for as long as the window runs, however the sessions are renumbered or renamed.
+fn browser_caller(scope: u64, title: &str) -> Caller {
+    Caller {
+        session: format!("session-{scope}"),
+        name: title.to_owned(),
+    }
 }
 
 /// Whether an agent may send the browser to `url`: a web address or the blank page, never a local file or an internal page of the browser.
@@ -218,12 +265,31 @@ fn origin_allowed(url: &str, restricted: bool, origins: &[String]) -> bool {
     })
 }
 
-/// Pastes the system clipboard's text into `page`, falling back to the engine's own paste when the clipboard holds no text.
+/// Pastes the system clipboard into `page`: its text with its rich text as HTML and the files it holds, or the picture on it saved as a file, which the page is offered as a paste of its own so rich editors keep the formatting and upload fields take the files; it falls back to the engine's own paste when the clipboard holds none of these.
 fn browser_paste(page: &View) {
-    match rustle::clipboard().and_then(|clipboard| clipboard.text()) {
-        Some(text) => page.paste_text(&text),
-        None => page.edit(EditAction::Paste),
+    let Some(clipboard) = rustle::clipboard() else {
+        page.edit(EditAction::Paste);
+        return;
+    };
+    let text = clipboard.text();
+    let html = clipboard.html();
+    let mut files: Vec<String> = clipboard
+        .files()
+        .iter()
+        .map(|file| file.to_string_lossy().into_owned())
+        .collect();
+    if files.is_empty()
+        && text.is_none()
+        && html.is_none()
+        && let Some(path) = clipboard.image().and_then(super::paste::save_picture)
+    {
+        files.push(path.to_string_lossy().into_owned());
     }
+    if text.is_none() && html.is_none() && files.is_empty() {
+        page.edit(EditAction::Paste);
+        return;
+    }
+    page.paste_rich(&text.unwrap_or_default(), html.as_deref(), &files);
 }
 
 /// Takes in one thing the helper reported that the reader is to see or answer.
@@ -432,7 +498,7 @@ impl App {
     /// The page of the tab being shown.
     fn browser_page(&self) -> Option<&View> {
         let active = self.browser_active()?;
-        self.web.pages.get(&active).map(|shown| &shown.view)
+        self.browser_front(active)
     }
 
     /// The view that shows in the window `id`.
@@ -799,13 +865,28 @@ impl App {
         }
     }
 
+    /// Tells the helper whether to block ads and trackers and whether to offer to save logins, when that is not what it was last told; sent as soon as the helper starts, before any page.
+    fn browser_privacy(&mut self) {
+        let general = &self.saved_window.general;
+        let wanted = (general.block_trackers, general.save_passwords);
+        if self.web.sent_privacy == Some(wanted) {
+            return;
+        }
+        if let Some(engine) = self.web.engine.as_ref() {
+            engine.set_privacy(wanted.0, wanted.1);
+            self.web.sent_privacy = Some(wanted);
+        }
+    }
+
     /// Puts on the system clipboard the newest text the reader copied or cut in any page, which the hidden engine cannot put there itself.
     fn browser_copied(&mut self) {
         let newest = self
             .web
             .pages
             .values()
-            .flat_map(|shown| shown.view.take_copied())
+            .map(|shown| &shown.view)
+            .chain(self.web.readers.values().map(|reader| &reader.view))
+            .flat_map(View::take_copied)
             .last();
         if let Some(copied) = newest
             && let Some(clipboard) = self.clipboard()
@@ -883,7 +964,9 @@ impl App {
                         }
                         self.web.engine = Some(engine);
                         self.web.sent_origins = None;
+                        self.web.sent_privacy = None;
                         self.browser_origins();
+                        self.browser_privacy();
                     }
                     Err(error) => {
                         self.web.failed = true;
@@ -964,11 +1047,31 @@ impl App {
                     self.web.tools_shown = 0;
                 }
                 Command::CopyText(text) => self.browser_copy_text(&text),
+                Command::ToggleReader => self.browser_toggle_reader(tab),
                 Command::Reload | Command::HardReload if self.browser_sealed_without_page(tab) => {
                     self.browser_load_sealed(tab, scale);
                 }
                 other => {
-                    if let Some(page) = self.web.pages.get(&tab).map(|shown| &shown.view) {
+                    if matches!(
+                        other,
+                        Command::Back
+                            | Command::Forward
+                            | Command::Reload
+                            | Command::HardReload
+                            | Command::Stop
+                    ) {
+                        self.browser_close_reader(tab);
+                    }
+                    let of_page = matches!(
+                        other,
+                        Command::Chrome(_) | Command::OpenExternal | Command::ClearData
+                    );
+                    let page = if of_page {
+                        self.web.pages.get(&tab).map(|shown| &shown.view)
+                    } else {
+                        self.browser_front(tab)
+                    };
+                    if let Some(page) = page {
                         Self::browser_page_command(page, other);
                     }
                 }
@@ -1011,10 +1114,11 @@ impl App {
             None => {}
         }
         let size = self.browser_size(Target::Browser(BrowserEvent::BrowserBody), scale);
+        let partition = self.model.read(|state| state.browser_partition(tab));
         let Some(engine) = self.browser_engine() else {
             return;
         };
-        match View::open(engine, &address, size.0, size.1, size.2) {
+        match View::open_in(engine, &address, size, partition.as_deref()) {
             Ok(view) => {
                 self.web.pages.insert(
                     tab,
@@ -1022,6 +1126,7 @@ impl App {
                         view,
                         sized: Some(size),
                         shown: 0,
+                        picture: 0,
                         sealed: false,
                         opened_at: None,
                     },
@@ -1067,6 +1172,7 @@ impl App {
                         view,
                         sized: Some(size),
                         shown: 0,
+                        picture: 0,
                         sealed: true,
                         opened_at: Some(Instant::now()),
                     },
@@ -1259,7 +1365,8 @@ impl App {
             | Command::LoadSealed
             | Command::OpenTools
             | Command::CloseTools
-            | Command::AdoptPopup(_) => {}
+            | Command::AdoptPopup(_)
+            | Command::ToggleReader => {}
         }
     }
 
@@ -1267,6 +1374,7 @@ impl App {
     fn browser_sync_tabs(&mut self) {
         let open: Vec<u32> = self.model.read(|state| state.browser_tab_numbers());
         self.web.pages.retain(|id, _| open.contains(id));
+        self.web.readers.retain(|id, _| open.contains(id));
         if self
             .web
             .tools
@@ -1282,6 +1390,7 @@ impl App {
     /// Closes the pages and ends the helper, so the process can leave.
     pub(super) fn browser_shutdown(&mut self) {
         self.web.tools = None;
+        self.web.readers.clear();
         self.web.pages.clear();
         self.web.engine = None;
     }
@@ -1358,7 +1467,10 @@ impl App {
                 let address = self.browser_unresolve(&url, host.as_deref());
                 self.model.update(|state| {
                     state.browser_scoped_to_tab(*id, |state| {
-                        state.browser_tab_opened(&address, host, agent, !agent);
+                        let opened = state.browser_tab_opened(&address, host, agent, !agent);
+                        if let Some(opened) = opened {
+                            state.browser_tab_inherit(*id, opened);
+                        }
                     });
                 });
             }
@@ -1379,10 +1491,12 @@ impl App {
                 view.focus(focused == Some(Target::Browser(BrowserEvent::BrowserToolsBody)));
             }
         }
-        let picture = |view: &View, texture: rustle::ImageKey, shown: &mut u64| {
+        let picture = |view: &View, texture: rustle::ImageKey, shown: &mut u64, made: &mut u64| {
             let frame = view.frame().filter(|frame| frame.generation != *shown)?;
+            let image = frame_picture(texture, &frame, (*shown, *made))?;
             *shown = frame.generation;
-            ImageData::keyed(texture, frame.width, frame.height, frame.rgba.clone())
+            *made = image.generation();
+            Some(image)
         };
         let [page_texture, tools_texture] = self.web.textures;
         let typing = self.focus.focused() == Some(Target::Browser(BrowserEvent::BrowserAddress));
@@ -1407,8 +1521,13 @@ impl App {
             let Some(shown) = self.web.pages.get_mut(&id) else {
                 continue;
             };
+            let front = self
+                .web
+                .readers
+                .get(&id)
+                .map_or(&shown.view, |reader| &reader.view);
             let page = if Some(id) == active {
-                picture(&shown.view, page_texture, &mut shown.shown)
+                picture(front, page_texture, &mut shown.shown, &mut shown.picture)
             } else {
                 None
             };
@@ -1417,14 +1536,17 @@ impl App {
                 page,
                 shown.view.title(),
                 address,
-                pointer_of(shown.view.cursor()),
+                pointer_of(front.cursor()),
             ));
         }
-        let tools = self
-            .web
-            .tools
-            .as_ref()
-            .and_then(|(_, view)| picture(view, tools_texture, &mut self.web.tools_shown));
+        let tools = self.web.tools.as_ref().and_then(|(_, view)| {
+            picture(
+                view,
+                tools_texture,
+                &mut self.web.tools_shown,
+                &mut self.web.tools_picture,
+            )
+        });
         let changed = self.model.read(|state| {
             reports.iter().any(|(id, page, title, address, pointer)| {
                 page.is_some()
@@ -1648,7 +1770,15 @@ impl App {
                 );
                 continue;
             };
-            let started = self.browser_tool(&host, local, &made.tool, &made.arguments, scale);
+            let caller = self.model.read(|state| {
+                state
+                    .sessions
+                    .get(position)
+                    .map(|session| browser_caller(session.scope, &session.title))
+                    .unwrap_or_default()
+            });
+            let started =
+                self.browser_tool(&host, local, &made.tool, &made.arguments, &caller, scale);
             self.browser_commands(scale);
             self.model.update(|state| {
                 state.browser_scope_leave(entered);
@@ -1665,10 +1795,16 @@ impl App {
         let results: Vec<_> = self
             .web
             .pages
-            .values()
-            .flat_map(|shown| shown.view.take_tool_results())
+            .iter()
+            .flat_map(|(tab, shown)| {
+                shown
+                    .view
+                    .take_tool_results()
+                    .into_iter()
+                    .map(move |result| (*tab, result))
+            })
             .collect();
-        for result in results {
+        for (tab, result) in results {
             let image = result
                 .image
                 .as_deref()
@@ -1678,6 +1814,15 @@ impl App {
                     bytes
                 })
                 .unwrap_or_default();
+            if let Some(step) = result.step.as_ref() {
+                let shown = steps::agent_step(step);
+                let folder = step.folder.clone();
+                self.model.update(|state| {
+                    state.browser_scoped_to_tab(tab, |state| {
+                        state.browser_step_recorded(&folder, shown);
+                    });
+                });
+            }
             self.browser_answer(result.call, result.ok, result.text, image);
         }
         !self.web.calls.is_empty()
@@ -1699,12 +1844,15 @@ impl App {
         local: u64,
         tool: &str,
         arguments: &str,
+        caller: &Caller,
         scale: f32,
     ) -> bool {
         let mut arguments_json: serde_json::Value =
             serde_json::from_str(arguments).unwrap_or(serde_json::Value::Null);
         if tool == "browser_tabs" {
-            self.browser_tabs_tool(host, local, &arguments_json, scale);
+            let (ok, text) = self.browser_tabs_tool(host, &arguments_json, scale);
+            self.browser_record_window_step(local, (tool, arguments), (ok, &text), caller);
+            self.browser_answer(local, ok, text, Vec::new());
             return true;
         }
         let named = match arguments_json.get("tab") {
@@ -1822,18 +1970,45 @@ impl App {
             );
             return true;
         };
-        page.tool(local, tool, &arguments_json.to_string());
+        page.tool(local, tool, &arguments_json.to_string(), caller);
         true
     }
 
-    /// Runs the tool `browser_tabs` an agent called, which the window answers itself: `list`, `open`, `select` and `close`.
+    /// Has the recording of `caller`'s session keep the call `local` of `tool` with `arguments`, which the window answered itself with `ok` and `text`, pictured by the tab tools now work on in the session's browser; with no page there, the step is kept without a picture. Nothing happens while no page of any session is open, since the helper is reached through one.
+    fn browser_record_window_step(
+        &self,
+        local: u64,
+        (tool, arguments): (&str, &str),
+        (ok, text): (bool, &str),
+        caller: &Caller,
+    ) {
+        let target = self.model.read(|state| {
+            state.browser.as_ref().and_then(|browser| {
+                browser
+                    .tab_infos()
+                    .iter()
+                    .find(|tab| tab.target)
+                    .map(|tab| tab.id)
+            })
+        });
+        let pictured = target.and_then(|id| self.web.pages.get(&id));
+        let (view, picture) = match pictured {
+            Some(shown) => (&shown.view, true),
+            None => match self.web.pages.values().next() {
+                Some(shown) => (&shown.view, false),
+                None => return,
+            },
+        };
+        view.record_step(local, tool, arguments, (ok, text), caller, picture);
+    }
+
+    /// Runs the tool `browser_tabs` an agent called, which the window answers itself: `list`, `open`, `select` and `close`; gives whether it worked and what it says.
     fn browser_tabs_tool(
         &mut self,
         host: &Option<String>,
-        local: u64,
         arguments: &serde_json::Value,
         scale: f32,
-    ) {
+    ) -> (bool, String) {
         let tab = arguments["tab"]
             .as_u64()
             .and_then(|id| u32::try_from(id).ok());
@@ -1931,7 +2106,7 @@ impl App {
                 format!("there is no action {other}; use list, open, select or close"),
             ),
         };
-        self.browser_answer(local, ok, text, Vec::new());
+        (ok, text)
     }
 
     /// Opens the web links the reader followed: a local one in the browser pane when the setting to do so is on and the embedded browser is on and installed, every other in the reader's browser.
@@ -2050,6 +2225,7 @@ impl App {
                 view,
                 sized: Some(size),
                 shown: 0,
+                picture: 0,
                 sealed: false,
                 opened_at: None,
             },
@@ -2063,7 +2239,11 @@ impl App {
         let mut opened = None;
         self.model.update(|state| {
             opened = state.browser_scoped_to_tab(opener, |state| {
-                state.browser_popup_opened(&address, host, popup.agent, popup.popup)
+                let id = state.browser_popup_opened(&address, host, popup.agent, popup.popup);
+                if let Some(id) = id {
+                    state.browser_tab_inherit(opener, id);
+                }
+                id
             });
         });
         if opened.is_none()
@@ -2125,6 +2305,7 @@ impl App {
         let downloading = self.browser_install();
         self.browser_revive();
         self.browser_origins();
+        self.browser_privacy();
         let calling = self.browser_agent(scale);
         self.browser_served();
         self.browser_links();
@@ -2138,6 +2319,7 @@ impl App {
         self.browser_safety();
         self.browser_copied();
         self.browser_fit(scale);
+        self.browser_readers(scale);
         self.browser_present();
         self.browser_chrome();
         true

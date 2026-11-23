@@ -8,6 +8,8 @@
 const { readerZoom } = require('./emulation');
 const { toWindow } = require('./input');
 const inspect = require('./inspect');
+const recording = require('./recording');
+const secrets = require('./secrets');
 const origins = require('./origins');
 const routing = require('./routing');
 
@@ -40,7 +42,7 @@ const CLICK_STILL = 250;
 const CLICK_SETTLING = 3000;
 
 /** The name of the scripting world the tools read pages in. */
-const WORLD = 'pm-agent';
+const { WORLD } = secrets;
 
 /** The script that lists what can be clicked or typed in, and what the page says. */
 const SNAPSHOT = `(() => {
@@ -725,7 +727,6 @@ async function resize(page, args) {
   protocol(page);
   if (args.reset === true) {
     await page.emulateViewport(null);
-    page.viewport = null;
     return done('The viewport follows the pane again.');
   }
   const [low, high] = VIEWPORT_LIMITS;
@@ -733,14 +734,13 @@ async function resize(page, args) {
   if (![width, height].every((side) => Number.isInteger(side) && side >= low && side <= high)) {
     return failed(`give width and height as whole numbers from ${low} to ${high}, or reset as true`);
   }
-  page.viewport = { width, height, deviceScaleFactor: 0, mobile: false };
-  await page.emulateViewport(page.viewport);
+  await page.emulateViewport({ width, height, deviceScaleFactor: 0, mobile: false });
   const found = await inWorld(page, `JSON.stringify({ width: window.innerWidth, height: window.innerHeight })`);
   return done(`The viewport is ${width} by ${height}; the page reports ${found.width} by ${found.height}. The pane shows it at its top left.`);
 }
 
 /** The tools that only read what the helper recorded, so they answer while a dialog stops the page. */
-const WORKS_WITH_DIALOG = new Set(['browser_console', 'browser_network']);
+const WORKS_WITH_DIALOG = new Set(['browser_console', 'browser_network', 'browser_record']);
 
 /**
  * Answers the dialog that is open.
@@ -765,12 +765,14 @@ async function answerDialog(page, dialogs, args) {
  * @param {Page} page The page.
  * @param {string} tool The tool's name, such as `browser_click`.
  * @param {Json} args What the agent gave it.
+ * @param {{ session: string, name: string }} [caller] The agent session that made the call, which `browser_record` records.
  * @returns {Promise<ToolOutcome>} What it came to.
  */
-async function run(page, tool, args) {
+async function run(page, tool, args, caller) {
   delete args.tab;
+  if (page.recorder) page.recorder.toolStarted();
   const dialogs = page.dialogs;
-  if (!dialogs) return execute(page, tool, args);
+  if (!dialogs) return execute(page, tool, args, caller);
   if (tool === 'browser_handle_dialog') return answerDialog(page, dialogs, args);
   if (dialogs.pending && !WORKS_WITH_DIALOG.has(tool)) {
     return failed(`${tool} cannot run while a dialog stops the page.${dialogs.report()}`);
@@ -780,7 +782,7 @@ async function run(page, tool, args) {
   const opened = new Promise((resolve) => {
     stop = dialogs.watch(() => resolve(done('The page opened a dialog, so the tool may not have finished.')));
   });
-  const work = execute(page, tool, args);
+  const work = execute(page, tool, args, caller);
   work.catch(() => {});
   dialogs.busy += 1;
   try {
@@ -797,9 +799,10 @@ async function run(page, tool, args) {
  * @param {Page} page The page.
  * @param {string} tool The tool's name, such as `browser_click`.
  * @param {Json} args What the agent gave it.
+ * @param {{ session: string, name: string }} [caller] The agent session that made the call, which `browser_record` records.
  * @returns {Promise<ToolOutcome>} What it came to.
  */
-async function execute(page, tool, args) {
+async function execute(page, tool, args, caller) {
   switch (tool) {
     case 'browser_navigate':
       return typeof args.url === 'string' ? navigate(page, args.url) : failed('no url was given');
@@ -907,6 +910,8 @@ async function execute(page, tool, args) {
       return inspect.networkTool(page, args);
     case 'browser_cdp':
       return inspect.cdpTool(page, args);
+    case 'browser_record':
+      return recording.recordTool(args, undefined, caller);
     case 'browser_emulate':
       return inspect.emulateTool(page, args);
     case 'browser_wait': {
@@ -928,4 +933,21 @@ async function execute(page, tool, args) {
   }
 }
 
-module.exports = { run };
+/**
+ * Whether each field a typing tool is about to type into holds a secret, such as a password or a one-time code, so that
+ * a recording does not keep what is typed; those that do stay marked as secret and are blurred in later screenshots.
+ * @param {Page} page The page.
+ * @param {string} tool `browser_type` or `browser_fill_form`; any other tool types into no field.
+ * @param {Json} args What the agent gave it.
+ * @returns {Promise<boolean[]>} For `browser_type`, whether its field is secret; for `browser_fill_form`, whether each of
+ *   its fields is. A field that names no element counts as secret.
+ */
+async function secretFields(page, tool, args) {
+  /** @type {Json[]} */
+  const fields = tool === 'browser_type' ? [args] : tool === 'browser_fill_form' && Array.isArray(args.fields) ? args.fields : [];
+  const elements = fields.map((field) => (field && typeof field === 'object' && target(field)) || 'null');
+  const found = await secrets.check(page, elements);
+  return found.map((is, at) => is || elements[at] === 'null');
+}
+
+module.exports = { run, secretFields };

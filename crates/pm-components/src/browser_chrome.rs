@@ -215,6 +215,23 @@ pub enum ChromeAction {
     },
     /// Sets the zoom of the page as a factor.
     SetZoom(f32),
+    /// Answers the offer `id` to save a login: save it, never offer for its site, or neither.
+    AnswerPassword {
+        /// The offer.
+        id: u64,
+        /// Whether to save the login.
+        save: bool,
+        /// Whether never to offer for the login's site again.
+        never: bool,
+    },
+    /// Fills the login form whose field holds the keyboard with the login saved for the user name.
+    FillLogin(String),
+    /// Blocks ads and trackers on the page's site, or lets the site through, and loads the page again.
+    SiteBlocking(bool),
+    /// Saves the page, with the pictures and styles it shows, into the Downloads folder.
+    SavePage,
+    /// Answers the question for the primary password of saved logins with what the reader typed, or nothing to turn it down.
+    PrimaryPassword(Option<String>),
 }
 
 /// What the pane shows around one tab's page from what the page reported.
@@ -236,6 +253,18 @@ pub struct PageChrome {
     pub tooltip: Option<(String, f32, f32)>,
     /// The page's request to share the screen, while it is open.
     pub screen: Option<ScreenAsk>,
+    /// How the blocker of ads and trackers stands on the page, once the helper said.
+    pub blocking: Option<crate::browser_privacy::SiteBlocking>,
+    /// The page's offer to save a login the reader sent, while it is open.
+    pub password: Option<crate::browser_privacy::PasswordAsk>,
+    /// The saved logins for the login field that holds the keyboard, and where the field is.
+    pub logins: Option<crate::browser_privacy::LoginChoices>,
+    /// The question for the primary password that seals saved logins, while it is open.
+    pub primary: Option<crate::browser_privacy::PrimaryAsk>,
+    /// Whether the page looks like an article that reader view can show.
+    pub readable: bool,
+    /// Whether reader view shows the page's article in place of the page.
+    pub reading: bool,
 }
 
 /// Emits `content` on one line in a column, `pixels` tall in `tone`, cut short at the column's edge.
@@ -410,6 +439,20 @@ impl WorkspaceState {
         }
     }
 
+    /// Notes whether the page of tab `tab` looks like an article that reader view can show.
+    pub fn browser_readable(&mut self, tab: u32, readable: bool) {
+        if let Some(tab) = self.browser_tab(tab) {
+            tab.chrome.readable = readable;
+        }
+    }
+
+    /// Notes whether reader view shows the article of the page of tab `tab` in place of the page.
+    pub fn browser_reading(&mut self, tab: u32, reading: bool) {
+        if let Some(tab) = self.browser_tab(tab) {
+            tab.chrome.reading = reading;
+        }
+    }
+
     /// Notes the address of the link under the pointer on the page of tab `tab`.
     pub fn browser_hovered(&mut self, tab: u32, url: &str) {
         if let Some(tab) = self.browser_tab(tab) {
@@ -555,6 +598,7 @@ pub fn page_overlays(browser: &Browser, on_hover: impl Fn(bool) + Clone + 'stati
     if !browser.suggestions.is_empty() {
         suggestion_list(&browser.suggestions, on_hover.clone());
     }
+    crate::browser_privacy::privacy_overlays(browser, on_hover.clone());
     if let Some(dialog) = chrome.dialog.as_ref() {
         dialog_sheet(dialog, on_hover);
     }

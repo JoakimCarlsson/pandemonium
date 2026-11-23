@@ -8,6 +8,7 @@
 //! Chromium: it takes sizes and input and hands back pictures.
 
 pub mod chrome;
+mod damage;
 mod engine;
 mod error;
 mod frame;
@@ -22,13 +23,13 @@ pub mod wire;
 
 pub use engine::Engine;
 pub use error::Error;
-pub use frame::Frame;
+pub use frame::{Frame, Region};
 pub use input::{Button, Cursor, Key, Modifiers};
 pub use life::{Lifecycle, LoadFailure, Popup};
 pub use link::{Copied, Notice};
 pub use render::Rendered;
 pub use view::View;
 pub use wire::{
-    Capture, CaptureKind, CapturedPicture, CertificateInfo, DownloadState, EditAction,
-    PickedElement, ToolResult, ZoomAction,
+    Caller, Capture, CaptureKind, CapturedPicture, CertificateInfo, DownloadState, EditAction,
+    PickedElement, RecordedStep, ToolResult, ZoomAction,
 };

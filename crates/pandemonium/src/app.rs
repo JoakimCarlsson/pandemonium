@@ -66,6 +66,7 @@ use crate::keys::Clip;
 use crate::view::View;
 use crate::work::Work;
 
+pub(crate) use self::browser::frame_picture;
 pub use self::host::run;
 
 /// How tall the strip of tabs above an open file is, in logical pixels.

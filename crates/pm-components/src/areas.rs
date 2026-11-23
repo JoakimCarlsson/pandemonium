@@ -701,6 +701,48 @@ pub enum BrowserEvent {
     BrowserScreenCancel,
     /// A suggestion of the address bar, by its place in the list.
     BrowserSuggestion(usize),
+    /// The shield of the toolbar, which blocks ads and trackers on the page's site or lets it through.
+    BrowserShield,
+    /// Saves the login the page offered to save.
+    BrowserPasswordSave,
+    /// Never offers to save logins for the page's site again.
+    BrowserPasswordNever,
+    /// Takes the offer to save a login away without saving it.
+    BrowserPasswordDismiss,
+    /// The bar offering to save a login, which takes presses that land on it and are for none of its buttons.
+    BrowserPasswordBar,
+    /// Fills the login form with a saved login, by its place in the list under the field.
+    BrowserLogin(usize),
+    /// The list of saved logins under a login field, which takes presses that land on it and are for none of its rows.
+    BrowserLoginList,
+    /// The line the primary password of saved logins is typed in.
+    BrowserPrimaryField,
+    /// The line a new primary password is typed in again, to confirm it.
+    BrowserPrimaryConfirm,
+    /// Sets the primary password typed, or unlocks the saved logins with it.
+    BrowserPrimaryOk,
+    /// Turns down the question for the primary password.
+    BrowserPrimaryCancel,
+    /// The sheet asking for the primary password, which takes presses that land on it and are for none of its controls.
+    BrowserPrimarySheet,
+    /// Opens or closes the panel of the steps an agent's browser recording kept.
+    BrowserSteps,
+    /// Shows a step of the recording, by its place in the panel's list.
+    BrowserStep(usize),
+    /// Shows the step before the one shown.
+    BrowserStepPrevious,
+    /// Shows the step after the one shown.
+    BrowserStepNext,
+    /// Goes back to showing the newest step as each arrives.
+    BrowserStepLatest,
+    /// Lists only the steps of one agent session, by its place in the panel's row of sessions.
+    BrowserStepSession(usize),
+    /// Lists the steps of every agent session again.
+    BrowserStepAllSessions,
+    /// Opens a new private tab, whose page keeps nothing once the last private tab closes.
+    BrowserNewPrivateTab,
+    /// Shows the article of the page in reader view, or the page again when reader view shows.
+    BrowserReader,
 }
 
 /// A press of a control of the settings window and the extensions page.
@@ -899,6 +941,8 @@ pub enum MenuEvent {
     BrowserMenu(crate::browser_menu::BrowserCommand),
     /// A row of the menu over the file shown: what the row does.
     EditorMenu(crate::context_menu::EditorCommand),
+    /// A row of the menu over a tab of the browser: what the row does.
+    BrowserTabMenu(crate::browser_tab_menu::BrowserTabCommand),
 }
 
 /// A press of a control of the dialogs laid over the window.

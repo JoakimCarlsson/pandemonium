@@ -34,6 +34,29 @@ jobs:
           node-version: 22
       - run: cd helpers/electron-browser && npm ci --ignore-scripts --no-audit --no-fund && npx tsc -p tsconfig.json
 
+  browser-e2e:
+    name: browser end-to-end (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install a virtual display and let Chromium sandbox itself
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb libnss3 libgbm1 libasound2t64
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Run the helper's end-to-end tests
+        env:
+          DISPLAY: ''
+          WAYLAND_DISPLAY: ''
+        run: make browser-e2e
+
   lint:
     name: clippy (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

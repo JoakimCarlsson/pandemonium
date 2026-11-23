@@ -61,6 +61,12 @@ settings! {
     OpenLocalLinks,
     /// Where the embedded browser's address bar searches.
     SearchEngine,
+    /// Whether the embedded browser blocks ads and trackers.
+    BlockTrackers,
+    /// Whether the embedded browser offers to keep logins and fills them in.
+    SavePasswords,
+    /// Whether each project's browser tabs keep a profile of their own.
+    ProjectBrowserProfiles,
     /// Whether agents may open only local addresses and the origins listed.
     RestrictAgentBrowsing,
     /// The origins agents may open besides local addresses.
@@ -306,6 +312,9 @@ impl Setting {
             | Self::OpenDevServers
             | Self::OpenLocalLinks
             | Self::SearchEngine
+            | Self::BlockTrackers
+            | Self::SavePasswords
+            | Self::ProjectBrowserProfiles
             | Self::RestrictAgentBrowsing
             | Self::AgentOrigins => Section::Browser,
             Self::ThemeMode
@@ -500,6 +509,18 @@ impl Setting {
             Self::SearchEngine => (
                 "Search engine",
                 "Where the address bar of the embedded browser searches for what is not an address.",
+            ),
+            Self::BlockTrackers => (
+                "Block ads and trackers",
+                "Stop the requests of pages for ads and trackers, by the EasyList and EasyPrivacy filter lists, fetched once a day. Pages on this machine are left alone, and the shield in the toolbar lets a site through. Needs the embedded browser.",
+            ),
+            Self::SavePasswords => (
+                "Offer to save passwords",
+                "Offer to keep the logins sent from pages in the system's keychain, and list them under a login field to fill it in. Agents never see them. Needs the embedded browser.",
+            ),
+            Self::ProjectBrowserProfiles => (
+                "A browser profile for each project",
+                "Keep the cookies, storage and sign-ins of each project's browser tabs apart from every other project's. Off, all projects share one profile. Private tabs never keep anything.",
             ),
             Self::RestrictAgentBrowsing => (
                 "Restrict agent browsing",

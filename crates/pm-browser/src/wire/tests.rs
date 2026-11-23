@@ -206,3 +206,113 @@ fn chrome_messages_read_as_the_helper_writes_them() {
     .unwrap();
     assert!(answer.contains("{\"AnswerDialog\":{\"id\":4,\"accept\":true,\"text\":\"x\"}}"));
 }
+
+/// A paste carries its HTML and files only when there are some, an older window's paste without them still reads, and the requests of saving, reader view and dropping files have the shapes the helper reads, as the article report it answers with.
+#[test]
+fn rich_paste_reader_and_drop_messages_have_the_helpers_shapes() {
+    use super::line;
+    use crate::chrome::{PageAction, PageReport};
+    let rich = String::from_utf8(line(&Request::PasteText {
+        page: 1,
+        text: "a".to_owned(),
+        html: Some("<b>a</b>".to_owned()),
+        files: vec!["/x/p.png".to_owned()],
+    }))
+    .unwrap();
+    assert_eq!(
+        rich,
+        "{\"PasteText\":{\"page\":1,\"text\":\"a\",\"html\":\"<b>a</b>\",\"files\":[\"/x/p.png\"]}}\n"
+    );
+    let older: Request = serde_json::from_str(r#"{"PasteText":{"page":1,"text":"a"}}"#).unwrap();
+    assert!(matches!(
+        older,
+        Request::PasteText { html: None, ref files, .. } if files.is_empty()
+    ));
+    let save = String::from_utf8(line(&Request::Chrome {
+        page: 2,
+        action: PageAction::SavePage,
+    }))
+    .unwrap();
+    assert_eq!(save, "{\"Chrome\":{\"page\":2,\"action\":\"SavePage\"}}\n");
+    let drop = String::from_utf8(line(&Request::Chrome {
+        page: 2,
+        action: PageAction::DropFiles {
+            x: 5,
+            y: 6,
+            paths: vec!["/a".to_owned()],
+        },
+    }))
+    .unwrap();
+    assert!(drop.contains("{\"DropFiles\":{\"x\":5,\"y\":6,\"paths\":[\"/a\"]}}"));
+    let article: Event = serde_json::from_str(
+        r#"{"Chrome":{"page":3,"report":{"Article":{"title":"T","html":"<p>b</p>"}}}}"#,
+    )
+    .unwrap();
+    match article {
+        Event::Chrome {
+            report: PageReport::Article(article),
+            ..
+        } => {
+            assert_eq!(article.title, "T");
+            assert!(article.error.is_empty());
+        }
+        other => panic!("read as {other:?}"),
+    }
+    let readable: Event =
+        serde_json::from_str(r#"{"Chrome":{"page":3,"report":{"Readable":{"readable":true}}}}"#)
+            .unwrap();
+    assert!(matches!(
+        readable,
+        Event::Chrome {
+            report: PageReport::Readable { readable: true },
+            ..
+        }
+    ));
+}
+
+/// The question for the primary password reads as the helper writes it, its closing as a bare word, and the answer is written as the helper reads it, with `null` for turning it down.
+#[test]
+fn primary_password_reads_and_writes_as_the_helper_does() {
+    use super::line;
+    use crate::chrome::{PageAction, PageReport};
+    let asked: Event = serde_json::from_str(
+        r#"{"Chrome":{"page":4,"report":{"PrimaryPassword":{"create":true,"origin":"https://example.com","problem":""}}}}"#,
+    )
+    .unwrap();
+    match asked {
+        Event::Chrome {
+            report: PageReport::PrimaryPassword(ask),
+            ..
+        } => {
+            assert!(ask.create);
+            assert_eq!(ask.origin, "https://example.com");
+        }
+        other => panic!("read as {other:?}"),
+    }
+    let closed: Event =
+        serde_json::from_str(r#"{"Chrome":{"page":4,"report":"PrimaryPasswordClosed"}}"#).unwrap();
+    assert!(matches!(
+        closed,
+        Event::Chrome {
+            report: PageReport::PrimaryPasswordClosed,
+            ..
+        }
+    ));
+    let typed = String::from_utf8(line(&Request::Chrome {
+        page: 4,
+        action: PageAction::PrimaryPassword {
+            password: Some("correct horse".to_owned()),
+        },
+    }))
+    .unwrap();
+    assert_eq!(
+        typed,
+        "{\"Chrome\":{\"page\":4,\"action\":{\"PrimaryPassword\":{\"password\":\"correct horse\"}}}}\n"
+    );
+    let declined = String::from_utf8(line(&Request::Chrome {
+        page: 4,
+        action: PageAction::PrimaryPassword { password: None },
+    }))
+    .unwrap();
+    assert!(declined.contains("{\"PrimaryPassword\":{\"password\":null}}"));
+}

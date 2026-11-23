@@ -20,10 +20,13 @@ const origins = require('./origins');
 const pick = require('./pick');
 const routing = require('./routing');
 const { Recorder } = require('./recorder');
+const recording = require('./recording');
 const { Restriction } = require('./restriction');
+const { Screencast } = require('./screencast');
 const sealed = require('./sealed');
 const sealedPolicy = require('./sealed-policy');
 const { Surface, displayScale, deviceSide, ENGINE_SCALE } = require('./surface');
+const partitions = require('./partitions');
 
 /** @typedef {import('./types').PageRequest} PageRequest */
 /** @typedef {import('./types').Send} Send */
@@ -80,6 +83,7 @@ function zoomFrom(action, now) {
  * @property {boolean} inspectable Whether it records its console and answers tools; the developer tools and sealed pages do not.
  * @property {SealedDocument} [sealed] The document the page shows sealed from the network, in place of an address; such a page is never inspectable.
  * @property {import('electron').BrowserWindow} [window] The offscreen window another page opened with `window.open`, which the page takes over in place of making one.
+ * @property {string} [partition] The profile it lives in, by the engine's name for it, or the one a taken window already lives in; the shared one when not given.
  */
 
 /**
@@ -90,34 +94,57 @@ class Page {
    * Makes the page and its offscreen window.
    * @param {PageOptions} options What the page is, and where it reports.
    */
-  constructor({ id, width, height, scale, folder, send, inspectable, sealed: document, window: opened }) {
+  constructor({ id, width, height, scale, folder, send, inspectable, sealed: document, window: opened, partition }) {
     /** @type {number} The number the window chose for the page. */
     this.id = id;
     /** @type {Send} Tells the window what the page reports. */
     this.send = send;
-    /** @type {number | null} The scripting context the picker runs in, while pick mode is on. */
-    this.pickContext = null;
-    /** @type {boolean} Whether the page already listens for what the picker reports. */
-    this.pickListening = false;
+    /** @type {boolean} Whether the page records its console and answers tools. */
+    this.inspectable = Boolean(inspectable);
     /** @type {SealedDocument | null} The document the page shows sealed from the network, when it shows one. */
     this.sealed = document || null;
+    /** @type {string} The profile the page lives in, by the engine's name for it; empty for the shared one, and always so for a sealed page. */
+    this.partition = this.sealed ? '' : partition || '';
     /** @type {number} The display scale of the pane the page is shown in, as the window last gave it. */
     this.paneScale = displayScale(scale);
     /** @type {{ width: number, height: number }} The size of the pane, in logical pixels, as the window last gave it. */
     this.size = { width, height };
-    /** @type {number} The part of the contents' zoom that carries the pane's display scale: the scale, or 1 while an emulated pixel ratio carries it or before the page set it. */
-    this.zoomBase = 1;
-    /** @type {number} The zoom the reader chose, on top of {@link Page#zoomBase}. */
+    /** @type {number} The device scale the engine paints the page's window at: {@link ENGINE_SCALE}, or the pixel ratio of a mobile viewport an agent set ({@link emulation.engineScale}). */
+    this.engineScale = ENGINE_SCALE;
+    /** @type {number} The zoom the contents should have: the share of the pane's scale and the reader's zoom that {@link emulation.rendering} gives the zoom, or the reader's zoom alone for a page without a protocol of its own. */
+    this.engineZoom = 1;
+    /** @type {number} The zoom the reader chose. */
     this.zoom = 1;
     /** @type {Cdp | null} The protocol a page that is not inspectable is reached through to render at the pane's scale, once one is above 1. */
     this.scaler = null;
     /** @type {Surface} The files the page paints into. */
     this.surface = new Surface(folder, id, (w, h, paths) => send({ Surface: { page: id, width: w, height: h, paths } }));
-    /** @type {import('electron').BrowserWindow} The offscreen window that holds the page. */
-    this.win = opened || new BrowserWindow({
+    /** @type {import('./emulation').Emulated | null} The viewport an agent set with `browser_resize` or `browser_emulate`, until it is reset. */
+    this.viewport = null;
+    /** @type {string | null} The user agent an agent set with `browser_emulate`, until it is reset. */
+    this.userAgent = null;
+    /** @type {InstanceType<typeof Restriction>} When the restriction on agent browsing applies to the page, and what it refused. */
+    this.restriction = new Restriction();
+    /** @type {boolean} Whether the window asked for the page to close, so the page's closing is not reported back to it. */
+    this.closedByWindow = false;
+    /** @type {{ url: string, origin: string, fingerprint: string } | null} The site whose untrusted certificate kept the page from loading, while the reader has not chosen. */
+    this.certificate = null;
+    /** @type {((page: Page) => void) | null} Starts following the page's contents for what is watched from outside it, again for each window it moves into ({@link Page#rebuild}). */
+    this.rewatch = null;
+    this.adopt(opened || this.makeWindow(), Boolean(opened));
+    this.applyScale();
+  }
+
+  /**
+   * Makes an offscreen window for the page, painted at {@link Page#engineScale} and sized for what it shows
+   * ({@link Page#windowSize}).
+   * @returns {import('electron').BrowserWindow} The window, hidden.
+   */
+  makeWindow() {
+    const size = this.windowSize(this.viewport);
+    return new BrowserWindow({
       show: false,
-      width: deviceSide(width, this.paneScale),
-      height: deviceSide(height, this.paneScale),
+      ...size,
       useContentSize: true,
       webPreferences: this.sealed
         ? sealed.preferences(path.join(__dirname, 'popups-preload.js'), ENGINE_SCALE)
@@ -125,14 +152,35 @@ class Page {
             sandbox: true,
             contextIsolation: true,
             nodeIntegration: false,
-            offscreen: { deviceScaleFactor: ENGINE_SCALE },
+            offscreen: { deviceScaleFactor: this.engineScale },
             preload: path.join(__dirname, 'popups-preload.js'),
             nodeIntegrationInSubFrames: true,
             backgroundThrottling: false,
+            session: partitions.sessionOf(this.partition),
           },
     });
+  }
+
+  /**
+   * Takes `win` as the page's window and starts following what it shows: its painting, navigation, title and cursor,
+   * and for an inspectable page its protocol, cross-origin input, console, dialogs and file pickers.
+   * @param {import('electron').BrowserWindow} win The window.
+   * @param {boolean} opened Whether another page opened it with `window.open`, so the engine gives it no offscreen view
+   *   and it is painted through a screencast.
+   * @returns {void}
+   */
+  adopt(win, opened) {
+    const { id, send } = this;
+    /** @type {import('electron').BrowserWindow} The offscreen window that holds the page. */
+    this.win = win;
     /** @type {import('electron').WebContents} What the window shows. */
     this.contents = this.win.webContents;
+    /** @type {number | null} The scripting context the picker runs in, while pick mode is on. */
+    this.pickContext = null;
+    /** @type {boolean} Whether the page already listens for what the picker reports. */
+    this.pickListening = false;
+    /** @type {InstanceType<typeof Screencast> | null} How a window another page opened is sized and painted, since the engine gives it no offscreen view. */
+    this.screencast = null;
     /** @type {Cdp | null} The page's DevTools protocol, for pages that are inspectable. */
     this.cdp = null;
     /** @type {Recorder | null} What the page wrote to its console and asked of the network, for pages that are inspectable. */
@@ -141,14 +189,6 @@ class Page {
     this.dialogs = null;
     /** @type {FileChooser | null} The page's file pickers, for pages that are inspectable. */
     this.fileChooser = null;
-    /** @type {import('./emulation').Emulated | null} The viewport an agent set with `browser_resize` or `browser_emulate`, until it is reset. */
-    this.viewport = null;
-    /** @type {string | null} The user agent an agent set with `browser_emulate`, until it is reset. */
-    this.userAgent = null;
-    /** @type {InstanceType<typeof Restriction>} When the restriction on agent browsing applies to the page, and what it refused. */
-    this.restriction = new Restriction();
-    /** @type {{ url: string, origin: string, fingerprint: string } | null} The site whose untrusted certificate kept the page from loading, while the reader has not chosen. */
-    this.certificate = null;
     this.contents.setFrameRate(60);
     if (this.sealed) {
       const { title: named } = this.sealed;
@@ -162,7 +202,11 @@ class Page {
       this.contents.setWindowOpenHandler(({ url, disposition }) => {
         const refused = webAddress(url) ? this.guard(url) : null;
         if (!refused && this.popupAllowed(url, disposition)) {
-          return { action: 'allow', outlivesOpener: true, overrideBrowserWindowOptions: lifecycle.popupOptions(ENGINE_SCALE) };
+          return {
+            action: 'allow',
+            outlivesOpener: true,
+            overrideBrowserWindowOptions: lifecycle.popupOptions(ENGINE_SCALE, partitions.sessionOf(this.partition)),
+          };
         }
         if (webAddress(url) && !refused) send({ OpenRequested: { page: id, url, agent: this.agentBusy() } });
         return { action: 'deny' };
@@ -191,20 +235,78 @@ class Page {
       send({ Found: { page: id, active: result.activeMatchOrdinal, total: result.matches } }),
     );
     this.contents.on('cursor-changed', (_event, type) => send({ Cursor: { page: id, cursor: cursorOf(type) } }));
-    if (inspectable && !this.sealed) {
+    if (this.inspectable && !this.sealed) {
       this.cdp = new Cdp(this.contents);
       this.contents.setZoomMode('isolated');
-      routing.install(this.cdp, this.contents, () => this.paneScale * this.readerZoom());
+      routing.install(this.cdp, this.contents, () => this.paneScale * this.readerZoom(), () => this.topUnits());
       this.recorder = new Recorder(this.cdp);
       this.dialogs = new Dialogs(this);
       this.fileChooser = new FileChooser(this);
+      if (opened) this.screencast = new Screencast(this.cdp, (image) => this.paint(image));
     }
-    if (inspectable || this.sealed) chrome.watch(this);
+    if (this.inspectable || this.sealed) chrome.watch(this);
     this.contents.on('did-start-navigation', (details) => {
       if (details.isMainFrame && !details.isSameDocument) this.applyScale();
     });
-    if (opened) this.win.setContentSize(deviceSide(width, this.paneScale), deviceSide(height, this.paneScale));
-    this.applyScale();
+    if (!opened) {
+      const size = this.windowSize(this.viewport);
+      this.win.setContentSize(size.width, size.height);
+    }
+  }
+
+  /**
+   * Moves the page into a new offscreen window painted at the device scale `scale`, since the engine fixes a window's
+   * scale when it makes it, and only that scale reaches cross-origin frames while a mobile viewport is emulated. The
+   * old window is closed without telling the window the page closed, and the new one takes over the page's history
+   * and what it emulates; the page's document is loaded again from its history once `resume` is called. A window
+   * another page opened, a sealed page and a page without a protocol are never moved, nor one already at `scale`.
+   * @param {number} scale The device scale for the new window.
+   * @returns {(() => Promise<void>) | null} Loads the page's history into the new window, to call once its rendering
+   *   is set; nothing when the page was not moved.
+   */
+  rebuild(scale) {
+    if (this.screencast || this.sealed || !this.cdp || this.win.isDestroyed() || scale === this.engineScale) return null;
+    const history = this.contents.navigationHistory;
+    const entries = history.getAllEntries();
+    const index = history.getActiveIndex();
+    const old = this.win;
+    if (this.dialogs) this.dialogs.dispose();
+    this.cdp.detach();
+    this.engineScale = scale;
+    this.adopt(this.makeWindow(), false);
+    old.destroy();
+    emulation.setReaderZoom(this.contents, this.zoom);
+    if (this.rewatch) this.rewatch(this);
+    const { cdp, contents, userAgent } = this;
+    return async () => {
+      const agent = userAgent ? emulation.applyUserAgent(cdp, userAgent).catch(() => {}) : null;
+      if (entries.length > 0 && index >= 0) await contents.navigationHistory.restore({ entries, index }).catch(() => {});
+      if (agent) await agent;
+    };
+  }
+
+  /**
+   * The size of the page's window, in the engine's pixels of it: the viewport an agent set, or else the pane, times
+   * the pane's display scale, over the window's {@link Page#engineScale}, rounded up so the window paints at least
+   * that many device pixels ({@link Page#paint} cuts what lies past them).
+   * @param {import('./emulation').Emulated | null} viewport The viewport an agent set, or nothing.
+   * @returns {{ width: number, height: number }} The window's content size.
+   */
+  windowSize(viewport) {
+    const shown = viewport || this.size;
+    return {
+      width: Math.ceil(deviceSide(shown.width, this.paneScale) / this.engineScale),
+      height: Math.ceil(deviceSide(shown.height, this.paneScale) / this.engineScale),
+    };
+  }
+
+  /**
+   * The window's own pixels per logical pixel of the pane, which Electron's input events and menus are given in: the
+   * pane's display scale over the window's {@link Page#engineScale}.
+   * @returns {number} The ratio.
+   */
+  inputScale() {
+    return this.paneScale / this.engineScale;
   }
 
   /**
@@ -240,15 +342,29 @@ class Page {
   }
 
   /**
-   * Writes a painted image into the shared files and tells the window.
+   * Writes a painted image into the shared files and tells the window. A window painted at an engine scale above 1 is
+   * rounded up to whole pixels of its own ({@link Page#windowSize}), so what it paints past the page's device size is
+   * cut off, and the whole picture is written, since the part that changed is then given in other units.
    * @param {import('electron').NativeImage} image What the page painted.
    * @param {import('electron').Rectangle} [dirty] The part that changed; the whole picture when missing.
    * @returns {void}
    */
   paint(image, dirty) {
-    const written = this.surface.write(image, dirty);
+    let picture = image;
+    let changed = dirty;
+    if (this.engineScale !== ENGINE_SCALE && !this.screencast) {
+      const shown = this.viewport || this.size;
+      const painted = image.getSize();
+      const width = Math.min(painted.width, deviceSide(shown.width, this.paneScale));
+      const height = Math.min(painted.height, deviceSide(shown.height, this.paneScale));
+      if (width !== painted.width || height !== painted.height) picture = image.crop({ x: 0, y: 0, width, height });
+      changed = undefined;
+    }
+    const written = this.surface.write(picture, changed);
     if (written) {
-      this.send({ Painted: { page: this.id, buffer: written.buffer, generation: written.generation } });
+      this.send({
+        Painted: { page: this.id, buffer: written.buffer, generation: written.generation, dirty: written.dirty },
+      });
     }
   }
 
@@ -280,7 +396,7 @@ class Page {
    */
   handle(request) {
     if (this.win.isDestroyed()) return;
-    if (deliver(this.contents, request, (event) => this.send(event), this.paneScale)) return;
+    if (deliver(this.contents, request, (event) => this.send(event), this.paneScale, this.inputScale())) return;
     const asked = /** @type {PageRequest} */ (request);
     if ('Load' in asked) {
       this.load(asked.Load.url);
@@ -309,6 +425,8 @@ class Page {
       this.focused(asked.Focus.focused);
     } else if ('Tool' in asked) {
       this.runTool(asked.Tool);
+    } else if ('RecordStep' in asked) {
+      this.recordStep(asked.RecordStep);
     } else if ('Pick' in asked) {
       this.pick(asked.Pick.on);
     } else if ('Capture' in asked) {
@@ -337,28 +455,61 @@ class Page {
 
   /**
    * Sizes the window to what the page shows, in device pixels: the viewport an agent set with `browser_resize` or
-   * `browser_emulate`, or else the pane, times the pane's display scale. A viewport is emulated by this size and not by
-   * the engine's fixed-size override, which would paint it at a device scale of 1.
+   * `browser_emulate`, or else the pane, times the pane's display scale, over the window's engine scale
+   * ({@link Page#windowSize}). A viewport is emulated by this size and not by the engine's fixed-size override, which
+   * would paint it at the window's engine scale. A window another page opened has no view to size, so its page is sized
+   * through its screencast instead ({@link Page#fitFrame}).
    * @param {import('./emulation').Emulated | null} viewport The viewport an agent set, or nothing.
    * @returns {void}
    */
   fitWindow(viewport) {
-    const shown = viewport || this.size;
-    this.win.setContentSize(deviceSide(shown.width, this.paneScale), deviceSide(shown.height, this.paneScale));
+    if (this.screencast) {
+      this.fitFrame(viewport).catch(() => {});
+      return;
+    }
+    const size = this.windowSize(viewport);
+    this.win.setContentSize(size.width, size.height);
   }
 
   /**
-   * Sets the viewport an agent asked for, or with nothing gives it back to the pane: sizes the window for it and has the
-   * engine render it at the pane's display scale. The caller keeps it in {@link Page#viewport}.
+   * Sizes the page of a window another page opened through its screencast: to the viewport an agent set, or else the
+   * pane, in device pixels, and has it render at the pane's display scale. Nothing without a screencast.
+   * @param {import('./emulation').Emulated | null} viewport The viewport an agent set, or nothing.
+   * @returns {Promise<void>} Resolves when the engine has taken it; rejects with the protocol's error.
+   */
+  async fitFrame(viewport) {
+    if (!this.screencast) return;
+    const shown = viewport || this.size;
+    const device = { width: deviceSide(shown.width, this.paneScale), height: deviceSide(shown.height, this.paneScale) };
+    await this.screencast.fit(device, viewport, this.paneScale, this.zoom);
+  }
+
+  /**
+   * Sets the viewport an agent asked for, or with nothing gives it back to the pane: moves the page into a window of
+   * the engine scale the viewport needs ({@link emulation.engineScale}, {@link Page#rebuild}), sizes the window for it,
+   * loads the page again when it moved, since the engine answers a new window's protocol only once it shows a
+   * document, and has the engine render it at the pane's display scale. It is kept in
+   * {@link Page#viewport} before anything is sent, so a rendering sent meanwhile, for a zoom, a resize or a navigation,
+   * is already the new one's.
    * @param {import('./emulation').Emulated | null} viewport The viewport, or nothing.
-   * @returns {Promise<void>} Resolves when the engine has taken it; rejects when the page has no protocol.
+   * @returns {Promise<void>} Resolves when the engine has taken it and a moved page has loaded again; rejects when the
+   *   page has no protocol.
    */
   async emulateViewport(viewport) {
     if (!this.cdp) throw new Error('the page has no protocol');
-    this.fitWindow(viewport);
+    this.viewport = viewport;
+    const resume = this.rebuild(emulation.engineScale(viewport, this.paneScale));
     this.carryScale(viewport);
-    await emulation.applyViewport(this.cdp, viewport, this.paneScale);
+    if (this.screencast) {
+      await this.fitFrame(viewport);
+      return;
+    }
+    this.fitWindow(viewport);
+    const restoring = resume ? resume() : null;
+    await emulation.applyViewport(this.cdp, viewport, this.paneScale, this.zoom, this.engineScale);
+    if (restoring) await restoring;
   }
+
 
   /**
    * Follows the pane's size and display scale. The window is sized in device pixels, the logical size times the scale
@@ -375,13 +526,17 @@ class Page {
     const changed = wanted !== this.paneScale;
     this.paneScale = wanted;
     this.size = { width, height };
+    if (changed && this.cdp && emulation.engineScale(this.viewport, wanted) !== this.engineScale) {
+      this.emulateViewport(this.viewport).catch(() => {});
+      return;
+    }
     this.fitWindow(this.viewport);
     if (changed) this.applyScale();
   }
 
   /**
-   * Tells the engine to render the page at the pane's display scale in its window of device pixels: by the page's zoom
-   * ({@link Page#carryScale}) and its own protocol, with the viewport an agent set, or, for the developer tools and
+   * Tells the engine to render the page at the pane's display scale and the reader's zoom in its window of device
+   * pixels: by the page's zoom ({@link Page#carryScale}) and its own protocol, with the viewport an agent set, or, for the developer tools and
    * sealed pages, through a debugger attached for this once the scale is above 1. It is sent again as each page starts loading, since a new document can
    * come up before an override reaches it.
    * @returns {void}
@@ -390,7 +545,8 @@ class Page {
     if (this.win.isDestroyed()) return;
     if (this.cdp) {
       this.carryScale(this.viewport);
-      emulation.applyViewport(this.cdp, this.viewport, this.paneScale).catch(() => {});
+      if (this.screencast) this.fitFrame(this.viewport).catch(() => {});
+      else emulation.applyViewport(this.cdp, this.viewport, this.paneScale, this.zoom, this.engineScale).catch(() => {});
       return;
     }
     if (!this.scaler && this.paneScale === 1) return;
@@ -405,44 +561,60 @@ class Page {
   }
 
   /**
-   * Sets the part of the contents' zoom that carries the pane's display scale, keeping the reader's zoom: the scale when
-   * {@link emulation.scaledByZoom} holds for the viewport, else 1. The contents' zoom mode is isolated, so it stays
+   * Sets the contents' zoom to its share of the pane's display scale and the reader's zoom for the viewport
+   * ({@link emulation.rendering}); the override carries the rest. The contents' zoom mode is isolated, so it stays
    * through navigation and touches no other page of the site.
    * @param {import('./emulation').Emulated | null} viewport The viewport an agent set, or nothing.
    * @returns {void}
    */
   carryScale(viewport) {
-    this.zoomBase = emulation.scaledByZoom(viewport) ? this.paneScale : 1;
-    emulation.setZoomBase(this.contents, this.zoomBase);
+    this.engineZoom = emulation.rendering(viewport, this.paneScale, this.zoom, null, this.engineScale).zoom;
     this.holdZoom();
   }
 
   /**
-   * Gives the contents the zoom they should have, the reader's on top of the part that carries the pane's display
-   * scale, when they lost it: a zoom set before the first document came up does not stay.
+   * Gives the contents the zoom they should have, {@link Page#engineZoom}, when they lost it: a zoom set before the
+   * first document came up does not stay.
    * @returns {void}
    */
   holdZoom() {
-    const wanted = this.zoom * this.zoomBase;
-    if (Math.abs(this.contents.getZoomFactor() - wanted) > 0.001) this.contents.setZoomFactor(wanted);
+    if (Math.abs(this.contents.getZoomFactor() - this.engineZoom) > 0.001) this.contents.setZoomFactor(this.engineZoom);
   }
 
   /**
-   * The zoom the reader sees: the contents' zoom without the part that carries the pane's display scale, which is the
-   * zoom the reader chose unless the engine held it to its limits.
+   * The window's pixels per unit of a point the page's own protocol target takes, for input and drops. The engine takes
+   * points in CSS pixels times the override's `scale`: in a window of its own, that is the window's pixels over the
+   * contents' zoom and the window's engine scale; in a window drawn by its screencast, whose override has no `scale`,
+   * plain CSS pixels, so the pane's scale times the reader's zoom.
+   * @returns {number} The window's pixels per unit.
+   */
+  topUnits() {
+    if (this.screencast) return this.paneScale * this.zoom;
+    return (this.contents.getZoomFactor() || 1) * this.engineScale;
+  }
+
+  /**
+   * The zoom the reader chose, which the page shows whole: what the contents' zoom cannot carry, the override does.
    * @returns {number} The zoom factor.
    */
   readerZoom() {
-    return this.contents.getZoomFactor() / this.zoomBase;
+    return this.zoom;
   }
 
   /**
-   * Sets the zoom the reader chose, on top of the part that carries the pane's display scale.
+   * Sets the zoom the reader chose and renders the page at it: a page with a protocol of its own through
+   * {@link Page#applyScale}, any other by its contents' zoom alone.
    * @param {number} factor The zoom factor.
    * @returns {void}
    */
   setReaderZoom(factor) {
     this.zoom = factor;
+    emulation.setReaderZoom(this.contents, factor);
+    if (this.cdp) {
+      this.applyScale();
+      return;
+    }
+    this.engineZoom = factor;
     this.holdZoom();
   }
 
@@ -492,6 +664,9 @@ class Page {
   async runTool(body) {
     /** @type {ToolOutcome} */
     let outcome;
+    const caller = { session: body.session || '', name: body.session_name || '' };
+    /** @type {boolean[]} */
+    let secret = [];
     if (!this.cdp) {
       const why = this.sealed
         ? 'This tab shows a document an agent drew for the reader, sealed from the network; the browser tools do not work on it. Open a tab of your own with browser_tabs.'
@@ -505,10 +680,12 @@ class Page {
       } catch (_) {
         args = {};
       }
+      const given = args && typeof args === 'object' ? /** @type {Record<string, any>} */ (args) : {};
+      secret = recording.typesSecrets(body.tool, caller) ? await agent.secretFields(this, body.tool, given) : [];
       const carried = this.restriction.takeRefusal();
       this.restriction.start(body.tool);
       try {
-        outcome = await agent.run(this, body.tool, args && typeof args === 'object' ? /** @type {Record<string, any>} */ (args) : {});
+        outcome = await agent.run(this, body.tool, given, caller);
       } catch (error) {
         outcome = { ok: false, text: String(error instanceof Error ? error.message : error), image: null };
       } finally {
@@ -523,7 +700,22 @@ class Page {
         outcome = { ...outcome, text: `${outcome.text}\n${notes}` };
       }
     }
-    this.send({ ToolDone: { page: this.id, result: { call: body.call, ...outcome } } });
+    const step = this.cdp ? await recording.afterTool(this, body.tool, body.arguments, outcome, caller, secret) : null;
+    this.send({ ToolDone: { page: this.id, result: step ? { call: body.call, ...outcome, step } : { call: body.call, ...outcome } } });
+  }
+
+  /**
+   * Keeps a tool call the window answered itself, such as `browser_tabs`, in the recording of the session that made it,
+   * with a screenshot of this page after it, and tells the window of the step; nothing is told when the session is not
+   * recorded.
+   * @param {import('./types').RecordStepBody} body The call, what it came to, and the session that made it.
+   * @returns {Promise<void>} Resolves once the step is kept.
+   */
+  async recordStep(body) {
+    const caller = { session: body.session || '', name: body.session_name || '' };
+    const outcome = { ok: body.ok === true, text: String(body.text || ''), image: null };
+    const step = await recording.afterTool(this.cdp ? this : null, body.tool, body.arguments, outcome, caller);
+    if (step) this.send({ ToolDone: { page: this.id, result: { call: body.call, ...outcome, step } } });
   }
 
   /**
@@ -549,9 +741,11 @@ class Page {
    * @returns {void}
    */
   close() {
+    this.closedByWindow = true;
     this.surface.close();
     if (this.dialogs) this.dialogs.dispose();
     if (this.cdp) this.cdp.detach();
+    if (this.screencast) this.screencast.dispose();
     if (this.scaler) this.scaler.detach();
     this.restriction.dispose();
     if (!this.win.isDestroyed()) this.win.destroy();

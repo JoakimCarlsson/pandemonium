@@ -103,6 +103,12 @@ pub struct GeneralSettings {
     pub agent_origins: Vec<String>,
     /// Where the embedded browser's address bar searches for what is not an address.
     pub search_engine: SearchEngine,
+    /// Whether the embedded browser blocks requests for ads and trackers, by the EasyList and EasyPrivacy filter lists, on every site the reader has not let through.
+    pub block_trackers: bool,
+    /// Whether the embedded browser offers to keep the logins sent from pages in the system's keychain, and fills them in again.
+    pub save_passwords: bool,
+    /// Whether each project's browser tabs keep their cookies, storage and cache in a profile of the project's own, so a sign-in in one project is not seen by another; off, every project shares one profile.
+    pub project_browser_profiles: bool,
 }
 
 impl Default for GeneralSettings {
@@ -121,6 +127,9 @@ impl Default for GeneralSettings {
             restrict_agent_browsing: false,
             agent_origins: Vec::new(),
             search_engine: SearchEngine::DuckDuckGo,
+            block_trackers: true,
+            save_passwords: true,
+            project_browser_profiles: false,
         }
     }
 }

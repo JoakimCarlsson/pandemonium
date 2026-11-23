@@ -21,7 +21,7 @@ use crate::theme::Role;
 use crate::browser_address::{address_of, address_with};
 use crate::browser_find::find_bar;
 use crate::browser_life::{life_bars, life_page, progress_line};
-use crate::browser_pointing::{PagePointer, cursor_of};
+use crate::browser_pointing::{PagePointer, cursor_of, page_file_drop};
 use crate::browser_safety::{Answer, certificate_page};
 use crate::browser_tabs::{BrowserTab, SavedTab, tab_strip};
 use crate::button::Variant;
@@ -116,6 +116,8 @@ pub enum Command {
     Stop,
     /// Make the window the helper numbered so, which a page opened with `window.open`, the tab's page.
     AdoptPopup(u64),
+    /// Show the article of the page in reader view, or the page again when reader view shows.
+    ToggleReader,
 }
 
 /// How the pointer looks over the page, as the page asks.
@@ -184,6 +186,8 @@ pub struct Browser {
     pub suggestions: Vec<(String, String)>,
     /// The hosts without a dot the reader visited, such as `devbox`, which the address bar opens rather than searches for.
     pub known_hosts: Vec<String>,
+    /// The steps the latest recording of the agents' browser work kept, and the panel showing them.
+    pub steps: crate::browser_steps::Steps,
 }
 
 impl Deref for Browser {
@@ -225,10 +229,11 @@ impl Browser {
             closed: Vec::new(),
             suggestions: Vec::new(),
             known_hosts: Vec::new(),
+            steps: crate::browser_steps::Steps::default(),
         }
     }
 
-    /// A browser as it was left: with `tabs`, the one at `active` shown, the developer tools open when `tools`, `tools_width` wide; nothing when `tabs` is empty.
+    /// A browser as it was left: with `tabs`, each with the title it had until its page reports its own and pinned as it was, the pinned ones first, the one at `active` shown, the developer tools open when `tools`, `tools_width` wide; nothing when `tabs` is empty.
     pub(crate) fn restored(
         tabs: &[SavedTab],
         active: usize,
@@ -243,8 +248,12 @@ impl Browser {
         for (tab, saved) in browser.tabs.iter_mut().zip(tabs) {
             tab.agent = saved.agent;
             tab.locked = saved.locked && !saved.agent;
+            tab.title.clone_from(&saved.title);
+            tab.pinned = saved.pinned;
         }
-        browser.active = active.min(browser.tabs.len() - 1);
+        let shown = browser.tabs[active.min(browser.tabs.len() - 1)].id;
+        browser.tabs.sort_by_key(|tab| !tab.pinned);
+        browser.active = browser.tab_index(shown).unwrap_or(0);
         if tools_width > 0.0 {
             browser.tools_width.set(tools_width);
         }
@@ -436,7 +445,11 @@ impl WorkspaceState {
 
     /// Carries out what pressing `id` of the browser does.
     pub(crate) fn browser_pressed(mut self, id: Target) -> Self {
-        if self.browser_tab_pressed(id) || self.browser_chrome_pressed(id) {
+        if self.browser_tab_pressed(id)
+            || self.browser_chrome_pressed(id)
+            || self.browser_privacy_pressed(id)
+            || self.browser_steps_pressed(id)
+        {
             return self;
         }
         match id {
@@ -488,6 +501,9 @@ impl WorkspaceState {
                 let tab = &mut **browser;
                 tab.picking = !tab.picking;
                 tab.commands.push(Command::Pick(tab.picking));
+            }
+            Target::Browser(BrowserEvent::BrowserReader) => {
+                browser.commands.push(Command::ToggleReader)
             }
             Target::Browser(BrowserEvent::BrowserTools) => {
                 browser.tools = !browser.tools;
@@ -652,7 +668,7 @@ fn toggled(on: bool) -> Variant {
     }
 }
 
-/// Emits the bar above the page of `browser`: back, forward, reload, the address, the zoom when it is not 100%, picking, capturing, the lock and the developer tools.
+/// Emits the bar above the page of `browser`: back, forward, reload, the address, the zoom when it is not 100%, reader view when the page looks like an article, picking, capturing, the lock and the developer tools.
 fn toolbar(browser: &Browser, capture_menu: Option<crate::Menu>) {
     let zoomed = (browser.zoom - 1.0).abs() > 0.005;
     rustle::row_arranged(
@@ -713,6 +729,19 @@ fn toolbar(browser: &Browser, capture_menu: Option<crate::Menu>) {
                     Variant::Ghost,
                 );
             }
+            if browser.chrome.readable || browser.chrome.reading {
+                Button::icon(
+                    phosphor::BOOK_OPEN,
+                    Target::Browser(BrowserEvent::BrowserReader),
+                )
+                .variant(toggled(browser.chrome.reading))
+                .tooltip(if browser.chrome.reading {
+                    "Show the page again"
+                } else {
+                    "Show the article in reader view"
+                })
+                .build();
+            }
             Button::icon(
                 phosphor::SELECTION,
                 Target::Browser(BrowserEvent::BrowserPick),
@@ -746,7 +775,9 @@ fn toolbar(browser: &Browser, capture_menu: Option<crate::Menu>) {
                 "Lock this tab so agents cannot change it"
             })
             .build();
+            crate::browser_privacy::shield_button(browser);
             crate::browser_chrome::downloads_button(browser);
+            crate::browser_steps::steps_button(browser);
             let tools = browser.tools;
             Button::icon(
                 phosphor::SIDEBAR_SIMPLE,
@@ -793,6 +824,9 @@ fn surface(
         .clip()
         .cursor(cursor_of(browser.pointer))
         .chain(page.modifier())
+        .chain(page_file_drop(
+            id == Target::Browser(BrowserEvent::BrowserBody) && !browser.clearing,
+        ))
         .pressable_pointing(
             id,
             send(Event::pressing(id)),
@@ -909,6 +943,9 @@ pub fn browser_view(state: &WorkspaceState, width: f32) {
                 Alignment::Start,
                 || {
                     page_box(browser, &covered);
+                    if !fullscreen {
+                        crate::browser_steps::steps_panel(&browser.steps);
+                    }
                     if browser.tools && !fullscreen {
                         divider();
                         surface(

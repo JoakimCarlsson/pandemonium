@@ -200,22 +200,25 @@ impl WorkspaceState {
     }
 }
 
-/// The parts of `browser` that are saved. A tab that shows a sealed document is left out, since its document is not kept, and the tab shown is then the nearest one before it that is kept.
+/// The parts of `browser` that are saved. A tab that shows a sealed document is left out, since its document is not kept, and so is a private tab, which keeps nothing; the tab shown is then the nearest one before it that is kept.
 pub(crate) fn saved_parts(browser: &Browser) -> SavedBrowserParts {
+    let kept = |tab: &&crate::browser_tabs::BrowserTab| tab.sealed.is_none() && !tab.private;
     let active = browser.tabs[..=browser.active.min(browser.tabs.len().saturating_sub(1))]
         .iter()
-        .filter(|tab| tab.sealed.is_none())
+        .filter(kept)
         .count()
         .saturating_sub(1);
     let tabs = browser
         .tabs
         .iter()
-        .filter(|tab| tab.sealed.is_none())
+        .filter(kept)
         .map(|tab| SavedTab {
             address: tab.address.text().to_owned(),
             host: tab.host.clone(),
             agent: tab.agent,
             locked: tab.locked,
+            title: tab.title.clone(),
+            pinned: tab.pinned,
         })
         .collect();
     (tabs, active, browser.tools, browser.tools_width.get())

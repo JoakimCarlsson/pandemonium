@@ -49,9 +49,13 @@ pub enum Shortcut {
     Stop,
     /// Takes the page out of full screen.
     LeaveFullscreen,
+    /// Saves the page, with what it shows, into the Downloads folder.
+    SavePage,
+    /// Opens a new private tab.
+    NewPrivateTab,
 }
 
-/// What `event` does in the browser while a page has the keyboard, if it is a key the browser takes: with Control or Command, `F` finds, `G` steps through the matches, `=`, `-` and `0` zoom, `R` reloads and with Shift reloads without the cache, `T` opens a new tab and with Shift opens again the tab closed last, `W` closes the tab, `L` goes to the address bar, `P` prints, Shift `I` shows the developer tools, `[` and `]` go back and forward, Tab and Page Down show the next tab and Shift Tab and Page Up the previous one; Alt with the left and right arrows goes back and forward; and `F3`, `F5`, Control `F5`, `F6` and `F12` do the same on their own.
+/// What `event` does in the browser while a page has the keyboard, if it is a key the browser takes: with Control or Command, `F` finds, `G` steps through the matches, `=`, `-` and `0` zoom, `R` reloads and with Shift reloads without the cache, `T` opens a new tab and with Shift opens again the tab closed last, Shift `N` opens a new private tab, `W` closes the tab, `L` goes to the address bar, `P` prints, `S` saves the page, Shift `I` shows the developer tools, `[` and `]` go back and forward, Tab and Page Down show the next tab and Shift Tab and Page Up the previous one; Alt with the left and right arrows goes back and forward; and `F3`, `F5`, Control `F5`, `F6` and `F12` do the same on their own.
 pub fn shortcut_of(event: &KeyEvent) -> Option<Shortcut> {
     let modifiers = event.modifiers;
     let command = (modifiers.ctrl || modifiers.meta) && !modifiers.alt;
@@ -72,6 +76,8 @@ pub fn shortcut_of(event: &KeyEvent) -> Option<Shortcut> {
             'w' => Some(Shortcut::CloseTab),
             'l' => Some(Shortcut::FocusAddress),
             'p' if !modifiers.shift => Some(Shortcut::Print),
+            's' if !modifiers.shift => Some(Shortcut::SavePage),
+            'n' if modifiers.shift => Some(Shortcut::NewPrivateTab),
             'i' if modifiers.shift => Some(Shortcut::DevTools),
             '[' | '{' if modifiers.meta => Some(Shortcut::Back),
             ']' | '}' if modifiers.meta => Some(Shortcut::Forward),
@@ -166,6 +172,8 @@ impl WorkspaceState {
                 }
             }
             Shortcut::Print => self.browser_queue(Command::Chrome(ChromeAction::Print)),
+            Shortcut::SavePage => self.browser_queue(Command::Chrome(ChromeAction::SavePage)),
+            Shortcut::NewPrivateTab => self.browser_new_private_tab(),
             Shortcut::Stop => self.browser_queue(Command::Stop),
             Shortcut::LeaveFullscreen => self.browser_leave_fullscreen(),
         }

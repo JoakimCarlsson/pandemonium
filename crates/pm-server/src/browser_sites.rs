@@ -1,6 +1,6 @@
 //! What the reader's browser remembers of sites, kept by the server of the reader's own machine for every window that connects to it: the zoom of each origin and the addresses visited, in a file in the app's data folder.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -21,12 +21,7 @@ pub(crate) struct Store {
     legacy: &'static str,
     /// What is remembered, once it was read.
     sites: Mutex<Option<BrowserSites>>,
-    /// The ids of the latest visits recorded, the most recent last, so that a visit a client sends again is counted once.
-    seen: Mutex<VecDeque<String>>,
 }
-
-/// How many visit ids the server remembers to count a visit sent again once.
-const SEEN_KEPT: usize = 1024;
 
 /// What windows kept of sites before the server kept it, with each zoom as a factor rather than in percent.
 #[derive(Default, Deserialize)]
@@ -50,7 +45,6 @@ impl Store {
             name,
             legacy,
             sites: Mutex::new(None),
-            seen: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -82,6 +76,7 @@ impl Store {
                 .map(|(origin, factor)| (origin, zoom_percent(factor)))
                 .collect(),
             visits: legacy.visits,
+            ..BrowserSites::default()
         };
         if self.save(&sites).is_ok() {
             let _ = std::fs::remove_file(legacy_path);
@@ -137,7 +132,7 @@ impl Store {
         })
     }
 
-    /// Records a visit to `url` called `title`, once for each `id`, the client's name for the visit; a visit without one is always recorded.
+    /// Records a visit to `url` called `title`, once for each `id`, the client's name for the visit, which is saved with the visit so that it is counted once even across a restart; a visit without one is always recorded.
     ///
     /// # Errors
     ///
@@ -148,24 +143,8 @@ impl Store {
         title: &str,
         id: Option<&str>,
     ) -> Result<Option<BrowserSites>, String> {
-        let mut seen = self
-            .seen
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(id) = id
-            && seen.iter().any(|known| known == id)
-        {
-            return Ok(None);
-        }
         let at = seconds_now();
-        let changed = self.change(|sites| sites.visited(url, title, at))?;
-        if let Some(id) = id {
-            seen.push_back(id.to_owned());
-            if seen.len() > SEEN_KEPT {
-                seen.pop_front();
-            }
-        }
-        Ok(changed)
+        self.change(|sites| sites.visited_as(url, title, at, id))
     }
 }
 
@@ -257,5 +236,16 @@ mod tests {
         store.visited("https://a.com/", "A", None).unwrap();
         assert_eq!(store.snapshot().visits[0].count, 3);
         let _ = std::fs::remove_file(Store::path("browser-sites-again").unwrap());
+    }
+
+    /// A visit sent again under the same id after the server restarted is still counted once.
+    #[test]
+    fn a_visit_sent_again_after_a_restart_counts_once() {
+        let store = Store::new("browser-sites-restarted", "browser-sites-restarted.json");
+        store.visited("https://a.com/", "A", Some("v1")).unwrap();
+        let again = Store::new("browser-sites-restarted", "browser-sites-restarted.json");
+        assert_eq!(again.visited("https://a.com/", "A", Some("v1")), Ok(None));
+        assert_eq!(again.snapshot().visits[0].count, 1);
+        let _ = std::fs::remove_file(Store::path("browser-sites-restarted").unwrap());
     }
 }

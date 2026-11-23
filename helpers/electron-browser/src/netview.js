@@ -25,23 +25,41 @@
  * @property {number | null} finished When it finished, in the engine's seconds.
  * @property {Json | null} timing The engine's timing of the response, in milliseconds from its request time.
  * @property {boolean} cached Whether the cache answered.
+ * @property {number | null} endedAt When it finished or failed, in milliseconds since the epoch.
+ * @property {string | null} body The response body as text, kept when the request finished with a text type, cut to `MOST_BODY` characters; nothing until then, for other types, or once dropped to keep memory bounded.
+ * @property {string} bodyNote Why there is no body when there is none and the reason is known, such as that it was dropped; empty otherwise.
+ * @property {string | null} requestBody What was sent with the request, such as a form or JSON, cut to `MOST_REQUEST_BODY` characters; nothing when nothing was sent.
  */
 
 /**
  * One line the console kept.
  * @typedef {object} ConsoleLine
+ * @property {number} seq Its number, counting up from 1 for the page, which `since` is compared with.
+ * @property {number} at When it was written, in milliseconds since the epoch.
  * @property {string} level `error`, `warning`, `info`, `log` or `debug`.
  * @property {string} text What it said.
+ * @property {string} source Where in the page's code it was written, as `address:line:column`, or empty when unknown.
+ * @property {string} stack The call stack, one frame to a line, for uncaught exceptions, errors and traces; empty otherwise.
+ * @property {boolean} uncaught Whether it is an exception nothing caught.
  */
 
 /** The most characters of a response body that are given back. */
 const MOST_BODY = 8000;
+
+/** The most characters of a request body that are given back. */
+const MOST_REQUEST_BODY = 4000;
+
+/** The most frames of a call stack that are kept. */
+const MOST_FRAMES = 12;
 
 /** The names of headers whose values are replaced. */
 const SECRET_HEADERS = new Set(['authorization', 'proxy-authorization', 'cookie', 'set-cookie', 'set-cookie2', 'x-api-key', 'x-auth-token']);
 
 /** The console levels an agent may ask for. */
 const LEVELS = ['error', 'warning', 'info', 'log', 'debug'];
+
+/** The resource types an agent may filter requests by, as the engine names them, in lower case. */
+const TYPES = ['document', 'stylesheet', 'image', 'media', 'font', 'script', 'xhr', 'fetch', 'websocket', 'eventsource', 'manifest', 'ping', 'preflight', 'other'];
 
 /**
  * The console level a protocol type or log level stands for.
@@ -110,7 +128,7 @@ function line(entry) {
   let outcome = 'pending';
   if (entry.failure !== null) outcome = `failed: ${entry.failure}`;
   else if (entry.status !== null) outcome = String(entry.status);
-  return `#${entry.id} ${entry.method} ${entry.url} -> ${outcome}`;
+  return `#${entry.id} ${entry.method} ${entry.url} -> ${outcome}${entry.type ? ` (${entry.type.toLowerCase()})` : ''}`;
 }
 
 /**
@@ -168,9 +186,114 @@ function detail(entry, body) {
     `Timing: ${timingText(entry)}`,
     `Request headers (secrets redacted; the engine may add some it does not report):\n${JSON.stringify(redactHeaders(entry.requestHeaders), null, 1)}`,
     `Response headers (secrets redacted):\n${JSON.stringify(redactHeaders(entry.responseHeaders), null, 1)}`,
+    `Request body:\n${entry.requestBody === null || entry.requestBody === undefined ? '(none)' : entry.requestBody}`,
     `Response body:\n${body}`,
   ];
   return sections.join('\n');
 }
 
-module.exports = { MOST_BODY, LEVELS, levelOf, parseLevels, matches, line, redactHeaders, textLike, timingText, detail };
+/**
+ * Parses what an agent gave as `type`.
+ * @param {unknown} type A resource type, such as `xhr` or `fetch`, or several separated by commas.
+ * @returns {Set<string> | null | { error: string }} The types wanted, in lower case, nothing for all, or why not.
+ */
+function parseTypes(type) {
+  if (type === undefined || type === '') return null;
+  if (typeof type !== 'string') return { error: `give type as text: some of ${TYPES.join(', ')}` };
+  const wanted = new Set();
+  for (const part of type.split(',')) {
+    const name = part.trim().toLowerCase();
+    if (!TYPES.includes(name)) return { error: `unknown type "${part.trim()}"; use some of ${TYPES.join(', ')}` };
+    wanted.add(name);
+  }
+  return wanted;
+}
+
+/**
+ * Whether a request is of one of the types wanted.
+ * @param {NetEntry} entry The request.
+ * @param {Set<string> | null} types The types wanted, in lower case, or nothing for all.
+ * @returns {boolean} Whether it is.
+ */
+function ofType(entry, types) {
+  return !types || types.has((entry.type || 'other').toLowerCase());
+}
+
+/**
+ * Whether an address matches a pattern: with `*` in it, a wildcard pattern over the whole address, where `*` stands for any run of characters; otherwise, text the address contains. Case does not matter.
+ * @param {string} url The address.
+ * @param {string} pattern The pattern.
+ * @returns {boolean} Whether it matches.
+ */
+function urlMatches(url, pattern) {
+  const wanted = pattern.trim().toLowerCase();
+  const address = url.toLowerCase();
+  if (!wanted.includes('*')) return address.includes(wanted);
+  const expression = wanted.split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*');
+  return new RegExp(`^${expression}$`).test(address);
+}
+
+/**
+ * A call stack of the protocol as lines.
+ * @param {Json | undefined} trace The protocol's `StackTrace`.
+ * @returns {string} One `at function (address:line:column)` to a line, at most `MOST_FRAMES`, or empty.
+ */
+function stackText(trace) {
+  const frames = (trace && Array.isArray(trace.callFrames) ? trace.callFrames : []).slice(0, MOST_FRAMES);
+  return frames.map((frame) => `at ${frame.functionName || '(anonymous)'} (${frame.url || '<anonymous>'}:${(frame.lineNumber ?? 0) + 1}:${(frame.columnNumber ?? 0) + 1})`).join('\n');
+}
+
+/**
+ * Where a protocol call stack or location points, as `address:line:column`.
+ * @param {string | undefined} url The address of the script.
+ * @param {number | undefined} lineNumber The line, counted from 0.
+ * @param {number | undefined} columnNumber The column, counted from 0.
+ * @returns {string} The place, or empty when there is no address.
+ */
+function sourceText(url, lineNumber, columnNumber) {
+  if (!url) return '';
+  if (typeof lineNumber !== 'number') return url;
+  return `${url}:${lineNumber + 1}:${(columnNumber ?? 0) + 1}`;
+}
+
+/**
+ * A clock time with milliseconds, in UTC.
+ * @param {number} at Milliseconds since the epoch.
+ * @returns {string} Such as `12:04:05.120`.
+ */
+function clock(at) {
+  return new Date(at).toISOString().slice(11, 23);
+}
+
+/**
+ * One console line as an agent reads it: its number, time, level, text and source, then its stack indented.
+ * @param {ConsoleLine} entry The line.
+ * @returns {string} The text.
+ */
+function consoleLine(entry) {
+  const head = `#${entry.seq} ${clock(entry.at)} [${entry.level}] ${entry.uncaught ? 'Uncaught ' : ''}${entry.text}${entry.source ? ` (${entry.source})` : ''}`;
+  if (!entry.stack) return head;
+  return `${head}\n${entry.stack.split('\n').map((frame) => `    ${frame}`).join('\n')}`;
+}
+
+module.exports = {
+  MOST_BODY,
+  MOST_REQUEST_BODY,
+  LEVELS,
+  TYPES,
+  levelOf,
+  parseLevels,
+  parseTypes,
+  ofType,
+  urlMatches,
+  stackText,
+  sourceText,
+  clock,
+  consoleLine,
+  matches,
+  line,
+  redactHeaders,
+  textLike,
+  timingText,
+  detail,
+};

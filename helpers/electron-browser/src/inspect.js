@@ -84,21 +84,33 @@ function recorder(page) {
   return page.recorder;
 }
 
+/** How long `wait_for` waits when no `timeout_ms` is given, in milliseconds. */
+const WAIT_DEFAULT = 10000;
+
+/** The longest `wait_for` may wait, in milliseconds, well within how long the window waits for a tool. */
+const WAIT_MOST = 60000;
+
 /**
- * `browser_console`: the console's messages, filtered by `level`, and forgotten with `clear`.
+ * `browser_console`: the console's messages, filtered by `level`, newer than `since`, and forgotten with `clear`; the answer ends with the cursor to pass as `since` next time.
  * @param {Page} page The page.
- * @param {Json} args `level` and `clear`.
+ * @param {Json} args `level`, `since` and `clear`.
  * @returns {ToolOutcome} The answer.
  */
 function consoleTool(page, args) {
   const levels = netview.parseLevels(args.level);
   if (levels && 'error' in levels) return failed(levels.error);
-  const text = recorder(page).consoleText('The console is empty.', /** @type {Set<string> | null} */ (levels), args.clear === true);
-  return done(args.clear === true ? `${text}\n[the console was cleared]` : text);
+  if (args.since !== undefined && !(Number.isInteger(args.since) && args.since >= 0)) return failed('give since as the cursor a browser_console answer ended with, a whole number');
+  const record = recorder(page);
+  const since = args.since === undefined ? 0 : args.since;
+  const cursor = record.consoleSequence;
+  const none = since > 0 ? 'No new messages.' : 'The console is empty.';
+  const text = record.consoleText(none, /** @type {Set<string> | null} */ (levels), args.clear === true, since);
+  const tail = `[cursor: ${cursor}; pass since: ${cursor} to see only newer messages]`;
+  return done(args.clear === true ? `${text}\n[the console was cleared]\n${tail}` : `${text}\n${tail}`);
 }
 
 /**
- * The body of a request, as text an agent can read.
+ * The body of a request, as text an agent can read: the one recorded when it finished, or else what the engine still holds.
  * @param {Page} page The page.
  * @param {import('./netview').NetEntry} entry The request.
  * @returns {Promise<string>} The body, cut, or why there is none.
@@ -106,6 +118,8 @@ function consoleTool(page, args) {
 async function bodyOf(page, entry) {
   if (entry.failure !== null) return '(the request failed, so there is no body)';
   if (entry.finished === null) return '(the request has not finished)';
+  if (entry.body !== null) return entry.body;
+  if (entry.bodyNote) return `(${entry.bodyNote})`;
   if (!netview.textLike(entry.mimeType)) return `(not shown: ${entry.mimeType || 'unknown type'} is not text)`;
   try {
     const reply = await timed(protocol(page), 'Network.getResponseBody', { requestId: entry.requestId });
@@ -117,15 +131,35 @@ async function bodyOf(page, entry) {
 }
 
 /**
- * `browser_network`: the requests, filtered by `filter`, forgotten with `clear`, or one in full with `request`.
+ * `browser_network` with `wait_for`: waits for a request whose address matches to finish and gives it in full.
  * @param {Page} page The page.
- * @param {Json} args `filter`, `clear` and `request`.
+ * @param {Json} args `wait_for`, `type` and `timeout_ms`.
+ * @param {Set<string> | null} types The resource types wanted, or nothing for any.
+ * @returns {Promise<ToolOutcome>} The answer.
+ */
+async function waitForRequest(page, args, types) {
+  if (typeof args.wait_for !== 'string' || args.wait_for.trim() === '') return failed('give wait_for as part of an address, or a pattern with *, such as "/api/items" or "*://*/api/*"');
+  if (args.timeout_ms !== undefined && !(Number.isInteger(args.timeout_ms) && args.timeout_ms > 0)) return failed('give timeout_ms as a whole number of milliseconds');
+  const timeout = Math.min(args.timeout_ms === undefined ? WAIT_DEFAULT : args.timeout_ms, WAIT_MOST);
+  const entry = await recorder(page).waitFor(args.wait_for, types, timeout);
+  if (!entry) return failed(`No request matching "${args.wait_for}" finished in ${timeout} ms.`);
+  return done(`A request matching "${args.wait_for}" finished.\n${netview.detail(entry, await bodyOf(page, entry))}`);
+}
+
+/**
+ * `browser_network`: the requests, filtered by `filter` and `type`, forgotten with `clear`, one in full with `request`, or the next to finish matching `wait_for`.
+ * @param {Page} page The page.
+ * @param {Json} args `filter`, `type`, `clear`, `request`, `wait_for` and `timeout_ms`.
  * @returns {Promise<ToolOutcome>} The answer.
  */
 async function networkTool(page, args) {
   const record = recorder(page);
   const clear = args.clear === true;
   if (args.filter !== undefined && typeof args.filter !== 'string') return failed('give filter as text, such as "api", "4xx" or "failed"');
+  const types = netview.parseTypes(args.type);
+  if (types && 'error' in types) return failed(types.error);
+  const wanted = /** @type {Set<string> | null} */ (types);
+  if (args.wait_for !== undefined) return waitForRequest(page, args, wanted);
   if (args.request !== undefined) {
     if (!Number.isInteger(args.request)) return failed('give request as the number after # in the list');
     const entry = record.request(args.request);
@@ -134,9 +168,10 @@ async function networkTool(page, args) {
     if (clear) record.forgetNetwork();
     return done(text);
   }
-  const text = record.networkText('No requests were made.', args.filter || '', clear);
+  const text = record.networkText('No requests were made.', args.filter || '', clear, wanted);
   return done(clear ? `${text}\n[the requests were cleared]` : text);
 }
+
 
 /**
  * `browser_cdp`: one DevTools command from the allowlist, with its result cut to a size.
@@ -191,11 +226,10 @@ async function paneSize(page) {
  * @returns {Promise<ToolOutcome>} The answer, with what the page reports.
  */
 async function emulateTool(page, args) {
-  const cdp = protocol(page);
+  protocol(page);
   if (args.reset === true) {
     await page.emulateViewport(null);
-    await emulation.applyUserAgent(cdp, null);
-    page.viewport = null;
+    await emulation.applyUserAgent(protocol(page), null);
     page.userAgent = null;
     return done('Emulation cleared: the viewport follows the pane and the user agent is the browser\'s own.');
   }
@@ -205,10 +239,10 @@ async function emulateTool(page, args) {
   const wanted = emulation.resolve(args, { viewport: page.viewport, userAgent: page.userAgent }, needsPane ? await paneSize(page) : { width: 0, height: 0 });
   if ('error' in wanted) return failed(wanted.error);
   await page.emulateViewport(wanted.viewport);
-  await emulation.applyUserAgent(cdp, wanted.userAgent);
-  page.viewport = wanted.viewport;
+  const moved = protocol(page);
+  await emulation.applyUserAgent(moved, wanted.userAgent);
   page.userAgent = wanted.userAgent;
-  const found = await cdp
+  const found = await moved
     .call('Runtime.evaluate', {
       expression: 'JSON.stringify({ width: window.innerWidth, height: window.innerHeight, ratio: window.devicePixelRatio, touch: navigator.maxTouchPoints, agent: navigator.userAgent })',
       returnByValue: true,

@@ -132,6 +132,7 @@ async function paintOnce(html, width, height, scale) {
     useContentSize: true,
     webPreferences: preferences(null, ENGINE_SCALE),
   });
+  win.setContentSize(deviceSide(width, shown), deviceSide(height, shown));
   const contents = win.webContents;
   /** @type {import('electron').NativeImage | null} */
   let latest = null;

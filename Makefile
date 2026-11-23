@@ -1,4 +1,4 @@
-.PHONY: fmt lint run browser-helper install install-server uninstall local preview release languages extension-sample
+.PHONY: fmt lint run browser-helper browser-e2e install install-server uninstall local preview release languages extension-sample
 
 fmt:
 	cargo fmt --all
@@ -10,6 +10,9 @@ run: browser-helper
 	XDG_DATA_HOME="$${XDG_DATA_HOME:-$$HOME/.local/share/pandemonium-dev}" PANDEMONIUM_BROWSER_HELPER="$(CURDIR)/helpers/electron-browser/pandemonium-browser-electron" cargo run -p pandemonium
 
 browser-helper: helpers/electron-browser/node_modules/electron/path.txt
+
+browser-e2e: browser-helper
+	cd helpers/electron-browser && if [ "$$(uname -s)" = Linux ] && [ -z "$$DISPLAY$$WAYLAND_DISPLAY" ]; then XDG_SESSION_TYPE=x11 xvfb-run -a -s "-screen 0 1024x768x24" npm run e2e; else npm run e2e; fi
 
 helpers/electron-browser/node_modules/electron/path.txt: helpers/electron-browser/package-lock.json
 	cd helpers/electron-browser && npm ci --no-audit --no-fund && node node_modules/electron/install.js

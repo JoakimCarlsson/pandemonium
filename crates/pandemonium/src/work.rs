@@ -431,8 +431,9 @@ mod tests {
                 percent: 80,
             },
         ];
+        let queued = queued.into_iter().map(|change| (change, 0)).collect();
         let (sites, changes) = settle_sites(fetched, queued);
-        let requests: Vec<Request> = changes.iter().map(SiteChange::request).collect();
+        let requests: Vec<Request> = changes.iter().map(|(change, _)| change.request()).collect();
         assert_eq!(sites.visits.len(), 2);
         assert_eq!(sites.zoom_of("https://docs.rs/"), Some(80));
         assert_eq!(sites.zoom_of("https://example.com/"), Some(150));
@@ -479,6 +480,53 @@ mod tests {
         assert!(matches!(&resent[0].1, Request::BrowserVisited { id: Some(id), .. } if id == "b"));
         copy.acknowledged(resent[0].0);
         assert!(copy.sent.is_empty());
+    }
+
+    /// A visit the server recorded before its acknowledgement was lost shows once in the window's copy and is not sent again, since the server's copy holds its id.
+    #[test]
+    fn a_visit_the_server_already_holds_is_not_counted_again() {
+        let mut copy = SitesCopy::default();
+        let first = copy.fetch();
+        copy.fetched(first, BrowserSites::default());
+        copy.change(SiteChange::Visited {
+            url: "https://a.com/".to_owned(),
+            title: "A".to_owned(),
+            at: 1,
+            id: "a".to_owned(),
+        })
+        .unwrap();
+        copy.lost();
+        let again = copy.fetch();
+        let mut server = BrowserSites::default();
+        server.visited_as("https://a.com/", "A", 1, Some("a"));
+        let resent = copy.fetched(again, server).unwrap();
+        assert!(resent.is_empty());
+        assert_eq!(copy.sites.visits[0].count, 1);
+    }
+
+    /// A change the server refuses is sent again after the next fetch, and dropped once it was refused as often as allowed.
+    #[test]
+    fn a_change_refused_too_often_is_dropped() {
+        let mut copy = SitesCopy::default();
+        let first = copy.fetch();
+        copy.fetched(first, BrowserSites::default());
+        let (mut sent, _) = copy.change(zoom("https://a.com/", 150)).unwrap();
+        for _ in 1..super::SITE_CHANGE_TRIES {
+            assert_eq!(copy.refused(sent), None);
+            let again = copy.fetch();
+            let resent = copy.fetched(again, BrowserSites::default()).unwrap();
+            assert_eq!(resent.len(), 1);
+            sent = resent[0].0;
+        }
+        assert_eq!(copy.refused(sent), Some(zoom("https://a.com/", 150)));
+        assert!(copy.sent.is_empty());
+        let again = copy.fetch();
+        assert!(
+            copy.fetched(again, BrowserSites::default())
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(copy.refused(sent), None);
     }
 
     /// Background reads leave icons steady while operations still advertise their progress.
@@ -550,7 +598,7 @@ impl SiteChange {
     /// Makes the change to `sites`, saying whether it changed anything.
     fn apply(&self, sites: &mut pm_protocol::BrowserSites) -> bool {
         match self {
-            Self::Visited { url, title, at, .. } => sites.visited(url, title, *at),
+            Self::Visited { url, title, at, id } => sites.visited_as(url, title, *at, Some(id)),
             Self::Titled { url, title } => sites.titled(url, title),
             Self::Zoom { url, percent } => sites.set_zoom(url, *percent),
         }
@@ -586,14 +634,17 @@ fn visit_id() -> String {
     format!("{}-{nanos}-{next}", std::process::id())
 }
 
-/// Makes the changes `queued` again on top of `fetched`, what the server answered, giving the window's new copy and the changes that still change something, to send.
+/// How many times the server may refuse a change to sites before the window drops it.
+const SITE_CHANGE_TRIES: u32 = 3;
+
+/// Makes the changes `queued`, each with how many times the server refused it, again on top of `fetched`, what the server answered, giving the window's new copy and the changes that still change something, to send.
 fn settle_sites(
     mut fetched: pm_protocol::BrowserSites,
-    queued: Vec<SiteChange>,
-) -> (pm_protocol::BrowserSites, Vec<SiteChange>) {
+    queued: Vec<(SiteChange, u32)>,
+) -> (pm_protocol::BrowserSites, Vec<(SiteChange, u32)>) {
     let changes = queued
         .into_iter()
-        .filter(|change| change.apply(&mut fetched))
+        .filter(|(change, _)| change.apply(&mut fetched))
         .collect();
     (fetched, changes)
 }
@@ -608,11 +659,11 @@ struct SitesCopy {
     /// Whether the copy holds the answer to the latest fetch.
     loaded: bool,
     /// The changes the reader made since the latest fetch was issued, made again on top of its answer and sent once it comes.
-    queued: Vec<SiteChange>,
+    queued: Vec<(SiteChange, u32)>,
     /// The number of the latest fetch; answers to earlier ones are ignored.
     fetching: u64,
     /// The changes sent that the server has not acknowledged yet, by their number, made again and sent again after the next fetch.
-    sent: std::collections::BTreeMap<u64, SiteChange>,
+    sent: std::collections::BTreeMap<u64, (SiteChange, u32)>,
     /// The number of the latest change sent.
     sending: u64,
 }
@@ -630,11 +681,11 @@ impl SitesCopy {
         self.fetching
     }
 
-    /// Keeps `change` until the server acknowledges it, giving its number with the request that sends it.
-    fn send(&mut self, change: SiteChange) -> (u64, Request) {
+    /// Keeps `change`, which the server refused `refusals` times, until the server acknowledges it, giving its number with the request that sends it.
+    fn send(&mut self, change: SiteChange, refusals: u32) -> (u64, Request) {
         self.sending += 1;
         let request = change.request();
-        self.sent.insert(self.sending, change);
+        self.sent.insert(self.sending, (change, refusals));
         (self.sending, request)
     }
 
@@ -644,15 +695,25 @@ impl SitesCopy {
             return None;
         }
         if self.loaded {
-            return Some(self.send(change));
+            return Some(self.send(change, 0));
         }
-        self.queued.push(change);
+        self.queued.push((change, 0));
         None
     }
 
     /// Forgets the change numbered `sent`, which the server acknowledged.
     fn acknowledged(&mut self, sent: u64) {
         self.sent.remove(&sent);
+    }
+
+    /// Counts a refusal of the change numbered `sent`, which is sent again after the next fetch until the server has refused it [`SITE_CHANGE_TRIES`] times, when it is dropped and given back.
+    fn refused(&mut self, sent: u64) -> Option<SiteChange> {
+        let (_, refusals) = self.sent.get_mut(&sent)?;
+        *refusals += 1;
+        if *refusals < SITE_CHANGE_TRIES {
+            return None;
+        }
+        self.sent.remove(&sent).map(|(change, _)| change)
     }
 
     /// Takes `fetched`, the answer to fetch number `fetch`, giving the numbers and requests that send the queued changes, or nothing when a later fetch superseded it.
@@ -671,7 +732,7 @@ impl SitesCopy {
         Some(
             changes
                 .into_iter()
-                .map(|change| self.send(change))
+                .map(|(change, refusals)| self.send(change, refusals))
                 .collect(),
         )
     }
@@ -1015,6 +1076,21 @@ impl Work {
             .unwrap_or_default()
         {
             self.ask(&None, request, Pending::SiteChange(sent));
+        }
+    }
+
+    /// Takes `response`, the server's answer to the change to sites numbered `sent`: forgets the change when it was done, and otherwise reports the refusal, dropping the change once it was refused too often.
+    fn site_change_answered(&mut self, sent: u64, response: Response) {
+        if matches!(response, Response::Done) {
+            self.browser_sites.acknowledged(sent);
+            return;
+        }
+        let reason = Self::trouble_of(response);
+        eprintln!("pandemonium: the server refused a change to the browser's sites: {reason}");
+        if let Some(change) = self.browser_sites.refused(sent) {
+            eprintln!(
+                "pandemonium: dropped the change {change:?} after the server refused it {SITE_CHANGE_TRIES} times"
+            );
         }
     }
 
@@ -2588,11 +2664,7 @@ impl Work {
                     self.sites_fetched(fetch, sites);
                 }
             }
-            Pending::SiteChange(sent) => {
-                if matches!(response, Response::Done) {
-                    self.browser_sites.acknowledged(sent);
-                }
-            }
+            Pending::SiteChange(sent) => self.site_change_answered(sent, response),
             Pending::ModelServers => match response {
                 Response::ModelServers { servers } => {
                     let mut agents = Vec::new();

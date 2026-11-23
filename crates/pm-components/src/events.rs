@@ -186,6 +186,9 @@ pub trait Operations {
     /// Files from another application, at `paths`, were let go over the window at `at`,
     /// over the row `over` of the project's files when they were let go on one.
     fn files_dropped(&self, _paths: Vec<PathBuf>, _at: (f32, f32), _over: Option<TreeTarget>) {}
+    /// Files from another application, at `paths`, were let go over the window of a web
+    /// page at `at`, in logical pixels from the page's top left.
+    fn browser_files_dropped(&self, _paths: Vec<PathBuf>, _at: (f32, f32)) {}
     /// The handle `id` on the edge of a panel is dragged `by` logical pixels across and
     /// down from where the drag began.
     fn sash_dragged(&self, _id: Target, _by: (f32, f32)) {}

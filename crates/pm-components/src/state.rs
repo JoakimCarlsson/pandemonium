@@ -1642,6 +1642,8 @@ pub struct WorkspaceState {
     pub terminal_menu: Option<crate::terminal_menu::TerminalMenu>,
     /// The menu open over the page of the browser, if any.
     pub browser_menu: Option<crate::browser_menu::BrowserMenu>,
+    /// The menu open over a tab of the browser's strip, if any.
+    pub browser_tab_menu: Option<crate::browser_tab_menu::BrowserTabMenu>,
     /// The project being dragged to another place, if one is.
     pub project_drag: Option<ProjectDrag>,
     /// What the agents have yet to be told.
@@ -2307,6 +2309,7 @@ impl WorkspaceState {
         self.message_menu = None;
         self.terminal_menu = None;
         self.browser_menu = None;
+        self.browser_tab_menu = None;
         self.git.menu = None;
         self.settings_servers.menu = None;
         self.tab_menu = None;

@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 /// How many visited addresses are kept; the ones visited least recently go first.
 pub const VISITS_KEPT: usize = 500;
 
+/// How many visit ids are kept, so that a visit sent again under the same id is counted once.
+pub const VISIT_IDS_KEPT: usize = 1024;
+
 /// The zoom a site is shown at when the reader never zoomed it, in percent.
 pub const PLAIN_ZOOM: u32 = 100;
 
@@ -32,6 +35,9 @@ pub struct BrowserSites {
     pub zoom: BTreeMap<String, u32>,
     /// The addresses visited, the most recent last.
     pub visits: Vec<Visit>,
+    /// The ids of the latest visits recorded under one, the most recent last, so that a visit sent again is counted once.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub visit_ids: Vec<String>,
 }
 
 /// The scheme, host and port of a web address, in lower case: `https://example.com:8443`; nothing when it is not an `http` or `https` address.
@@ -108,6 +114,26 @@ impl BrowserSites {
         if self.visits.len() > VISITS_KEPT {
             let extra = self.visits.len() - VISITS_KEPT;
             self.visits.drain(..extra);
+        }
+        true
+    }
+
+    /// Remembers a visit to `url` called `title` at `at`, as [`Self::visited`] does, once for each `id`, the client's name for the visit; a visit without one is always remembered. Says whether anything changed.
+    pub fn visited_as(&mut self, url: &str, title: &str, at: u64, id: Option<&str>) -> bool {
+        if let Some(id) = id
+            && self.visit_ids.iter().any(|known| known == id)
+        {
+            return false;
+        }
+        if !self.visited(url, title, at) {
+            return false;
+        }
+        if let Some(id) = id {
+            self.visit_ids.push(id.to_owned());
+            if self.visit_ids.len() > VISIT_IDS_KEPT {
+                let extra = self.visit_ids.len() - VISIT_IDS_KEPT;
+                self.visit_ids.drain(..extra);
+            }
         }
         true
     }
@@ -231,5 +257,22 @@ mod tests {
         assert_eq!((last.count, last.title.as_str(), last.last), (2, "A", 3));
         assert!(sites.titled("https://a.example/", "A again"));
         assert!(!sites.titled("https://a.example/", "A again"));
+    }
+
+    /// A visit under an id already remembered is not counted again, one without an id always is, and only the latest ids are kept.
+    #[test]
+    fn a_visit_under_a_known_id_counts_once() {
+        let mut sites = BrowserSites::default();
+        assert!(sites.visited_as("https://a.example/", "A", 1, Some("v1")));
+        assert!(!sites.visited_as("https://a.example/", "A", 2, Some("v1")));
+        assert!(sites.visited_as("https://a.example/", "A", 3, None));
+        assert_eq!(sites.visits[0].count, 2);
+        assert!(!sites.visited_as("file:///x", "X", 4, Some("v2")));
+        assert_eq!(sites.visit_ids, ["v1"]);
+        for index in 0..VISIT_IDS_KEPT {
+            sites.visited_as("https://b.example/", "B", 5, Some(&format!("w{index}")));
+        }
+        assert_eq!(sites.visit_ids.len(), VISIT_IDS_KEPT);
+        assert!(!sites.visit_ids.iter().any(|id| id == "v1"));
     }
 }

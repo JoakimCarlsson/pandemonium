@@ -3,8 +3,9 @@
 # Packs the browser helper into the archive the window downloads when the reader
 # turns the browser on, and its checksum: Electron, which holds the engine, with
 # English as its only locale where the system allows it, and the helper's own
-# files. It packs for the system it runs on; set npm_config_arch to pack another
-# architecture's Electron.
+# files with the packages they need at run time, such as the blocker of ads and
+# trackers, without Electron's own. It packs for the system it runs on; set
+# npm_config_arch to pack another architecture's Electron.
 #
 #   scripts/bundle-browser.sh <archive>
 
@@ -25,6 +26,8 @@ cp "$helper/package.json" "$helper/package-lock.json" "$stage/work/"
     node node_modules/electron/install.js
 )
 cp -r "$helper/main.js" "$helper/src" "$helper/package.json" "$stage/app/"
+cp -r "$stage/work/node_modules" "$stage/app/node_modules"
+rm -rf "$stage/app/node_modules/electron" "$stage/app/node_modules/.bin"
 dist="$stage/work/node_modules/electron/dist"
 case "$(uname -s)" in
     Linux)

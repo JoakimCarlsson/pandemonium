@@ -8,6 +8,15 @@ use crate::input::{Button, Cursor, Key};
 /// The feature a helper announces in [`Event::Features`] when it opens and renders sealed documents, [`Request::OpenHtml`] and [`Request::RenderHtml`]; a helper that does not announce it ignores both.
 pub const SEALED_PAGES: &str = "sealed-pages";
 
+/// The feature a helper announces in [`Event::Features`] when it blocks ads and trackers as [`Request::Privacy`] asks; a helper that does not announce it blocks nothing.
+pub const CONTENT_BLOCKING: &str = "content-blocking";
+
+/// The feature a helper announces in [`Event::Features`] when it offers to keep logins in the system's keychain and fills them in, as [`Request::Privacy`] asks.
+pub const PASSWORDS: &str = "passwords";
+
+/// The feature a helper announces in [`Event::Features`] when it opens a page in the profile `partition` of [`Request::Open`] names; a helper that does not announce it opens every page in its one shared profile.
+pub const PARTITIONS: &str = "partitions";
+
 /// What running a tool came to.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -20,6 +29,47 @@ pub struct ToolResult {
     pub text: String,
     /// Where a picture the tool took was saved, when it took one.
     pub image: Option<String>,
+    /// The step a recording under way kept of the call, with the screenshot taken after it; absent while no recording is under way and from older helpers.
+    pub step: Option<RecordedStep>,
+}
+
+/// The agent session that called a browser tool, which the helper keeps a recording for of its own.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Caller {
+    /// The session's key, unique in the window and stable while the window runs.
+    pub session: String,
+    /// What the session is called, for the folder and summary of its recording.
+    pub name: String,
+}
+
+/// One step of a recording of what agents did with the browser: a tool call, what it answered and a screenshot of the page after it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RecordedStep {
+    /// The folder of the recording the step belongs to.
+    pub folder: String,
+    /// Its number in the recording, from 1.
+    pub index: u32,
+    /// The tool that was called, such as `browser_click`.
+    pub tool: String,
+    /// What the agent gave the tool, as JSON text, cut short.
+    pub arguments: String,
+    /// Whether the tool worked.
+    pub ok: bool,
+    /// The start of what the tool answered.
+    pub text: String,
+    /// When the tool ended, in milliseconds since the epoch.
+    pub at: u64,
+    /// The helper's number of the page it ran on.
+    pub page: u32,
+    /// The address of the page after the tool ran.
+    pub url: String,
+    /// The file of the screenshot taken after the tool ran, in the recording's folder; empty when none could be taken. The file stays: it is part of the recording.
+    pub picture: String,
+    /// The key of the agent session whose recording the step belongs to, as the window named it with the call; empty from older helpers and when the window named none.
+    pub session: String,
+    /// What that session is called.
+    pub session_name: String,
 }
 
 /// An element of a page the reader picked.
@@ -154,7 +204,7 @@ pub enum ZoomAction {
 /// What the window asks of the helper; every page is named by a number the window chose.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Request {
-    /// Opens `url` in a new page of `width` by `height` logical pixels at display `scale`.
+    /// Opens `url` in a new page of `width` by `height` logical pixels at display `scale`, in the profile `partition` names.
     Open {
         /// The new page.
         page: u32,
@@ -166,6 +216,9 @@ pub enum Request {
         height: u32,
         /// The display scale it is drawn at.
         scale: f32,
+        /// The engine's name for the profile the page keeps its cookies, storage and cache in: one starting `persist:` is kept on disk, any other in memory only and emptied when its last page closes. Nothing, or empty, is the profile every page shares.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        partition: Option<String>,
     },
     /// Opens the developer tools of the page `of` as a new page.
     OpenTools {
@@ -298,6 +351,33 @@ pub enum Request {
         tool: String,
         /// What the agent gave it, as JSON text.
         arguments: String,
+        /// The key of the agent session that made the call, unique in the window; a recording is kept per session under it. Empty when the window names none.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        session: String,
+        /// What that session is called, for the folder and summary of its recording.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        session_name: String,
+    },
+    /// Keeps a tool call the window answered itself, such as `browser_tabs`, in the recording of the session that made it, with a screenshot of `page` after it; the step comes back as `ToolDone` with the same `call`, and nothing comes back when the session is not recorded. `page` may name no open page, in which case the step is kept without a picture and nothing comes back.
+    RecordStep {
+        /// The page to picture.
+        page: u32,
+        /// The caller's number for the call.
+        call: u64,
+        /// The tool, such as `browser_tabs`.
+        tool: String,
+        /// What the agent gave it, as JSON text.
+        arguments: String,
+        /// Whether the tool worked.
+        ok: bool,
+        /// What it answered.
+        text: String,
+        /// The key of the agent session that made the call, as for `Tool`.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        session: String,
+        /// What that session is called.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        session_name: String,
     },
     /// Cuts, copies or pastes in the page, or marks everything in it.
     Edit {
@@ -380,7 +460,7 @@ pub enum Request {
         page: u32,
         /// The number the question had.
         id: u64,
-        /// Whether the reader allowed it; the helper remembers the answer for the origin until it ends.
+        /// Whether the reader allowed it; the helper remembers the answer for the origin in the page's profile until it ends, or until that profile closes when it is kept in memory only.
         allow: bool,
     },
     /// The reader's choice on the page that reported a [`Event::CertificateError`].
@@ -421,12 +501,18 @@ pub enum Request {
         #[serde(default)]
         scale: f32,
     },
-    /// Puts `text`, read from the reader's clipboard by the window, where the page's selection is, in place of what is marked.
+    /// Puts `text`, read from the reader's clipboard by the window, where the page's selection is, in place of what is marked. With `html` or `files` the page is first offered all of them as a paste event of its own, as rich editors and upload fields read it; when it does not take it, an editable region gets the HTML and a plain field the text.
     PasteText {
         /// The page.
         page: u32,
         /// The text.
         text: String,
+        /// The clipboard's rich text as HTML, when it held some; absent from older windows.
+        #[serde(default)]
+        html: Option<String>,
+        /// The absolute paths of files the clipboard held, such as a picture the window saved from it or files copied in a file manager, offered to the page as pasted files; absent from older windows.
+        #[serde(default)]
+        files: Vec<String>,
     },
     /// Does something the reader asked of the page from the pane around it, such as answering a dialog or cancelling a download.
     Chrome {
@@ -465,6 +551,13 @@ pub enum Request {
         /// What is being composed.
         text: String,
     },
+    /// Sets what the helper does for the reader's privacy on every page but sealed ones; sent when the helper starts and whenever a setting changes.
+    Privacy {
+        /// Whether requests for ads and trackers are blocked, by the filter lists the helper keeps.
+        block_trackers: bool,
+        /// Whether logins sent from pages are offered to be kept in the system's keychain and filled in again.
+        save_passwords: bool,
+    },
 }
 
 /// What the helper reports to the window.
@@ -496,6 +589,10 @@ pub enum Event {
         buffer: u8,
         /// How many paints the page has made.
         generation: u64,
+        /// The part of the picture this paint changed, in device pixels: left, top, width and height; nothing when
+        /// the whole picture may have changed, as from a helper that does not say.
+        #[serde(default)]
+        dirty: Option<[u32; 4]>,
     },
     /// The reader picked an element of the page, or ended the mode without picking one.
     Picked {

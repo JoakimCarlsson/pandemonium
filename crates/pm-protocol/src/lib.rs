@@ -52,7 +52,8 @@ pub use release::ReleaseAsset;
 pub use request::{Attachment, Login, McpServer, Request, ToolListing};
 pub use response::{Response, SessionInfo, TerminalInfo};
 pub use sites::{
-    BrowserSites, PLAIN_ZOOM, VISITS_KEPT, Visit, origin_of, site_host_of, zoom_percent,
+    BrowserSites, PLAIN_ZOOM, VISIT_IDS_KEPT, VISITS_KEPT, Visit, origin_of, site_host_of,
+    zoom_percent,
 };
 pub use task::{RunnableTask, ToolchainInfo};
 pub use usage::{UsageDay, UsageModel, UsageReport, UsageSession, UsageTotals};

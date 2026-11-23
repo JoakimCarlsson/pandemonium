@@ -2,7 +2,8 @@
 //! moves over it and its leaving, the primary, secondary and middle buttons pressed on it,
 //! dragged and let go wherever the pointer is, the wheel turned over it and the mouse's back
 //! and forward buttons, each told to the app as a [`BrowserPointer`], with how the pointer
-//! looks as the page asks.
+//! looks as the page asks, and files dragged from another application and let go over the
+//! page.
 
 use crate::browser::Pointer;
 use crate::events::{self, OnPointer};
@@ -11,7 +12,10 @@ use crate::target::Target;
 use std::cell::Cell;
 use std::rc::Rc;
 
-use rustle::{CursorIcon, Modifier, PointerButton, PointerEvent, PointerInputPhase, PointerPhase};
+use rustle::{
+    CursorIcon, DragAndDropEvent, DragAndDropTarget, DragData, Modifier, PointerButton,
+    PointerEvent, PointerInputPhase, PointerPhase, Rect,
+};
 
 /// How the pointer looks over a page that asks for `pointer`.
 pub fn cursor_of(pointer: Pointer) -> CursorIcon {
@@ -247,4 +251,47 @@ impl PagePointer {
                 }
             })
     }
+}
+
+/// The window of a web page as a place files dragged from another application can be let go
+/// over: the files and the point of the page they were let go at are told to the app.
+struct PageFiles {
+    /// The app's state holder.
+    operations: Rc<dyn events::Operations>,
+    /// Where the window of the page is laid out in the app's window.
+    area: Rc<Cell<Rect>>,
+}
+
+impl DragAndDropTarget for PageFiles {
+    /// Tells the app the files were let go at the point of the page under the pointer.
+    fn on_drop(&self, event: &DragAndDropEvent) -> bool {
+        let Some(DragData::FilesList(files)) = event.drag_data() else {
+            return false;
+        };
+        let origin = self.area.get().origin;
+        self.operations.browser_files_dropped(
+            files.clone(),
+            (event.position.x - origin.x, event.position.y - origin.y),
+        );
+        true
+    }
+}
+
+/// The modifier of the window of a web page that takes files dragged from another
+/// application and let go over it, while `open`, so drop zones of the page get them.
+pub fn page_file_drop(open: bool) -> Modifier {
+    if !open {
+        return Modifier::new();
+    }
+    let area: Rc<Cell<Rect>> = Rc::default();
+    let placed = Rc::clone(&area);
+    Modifier::new()
+        .on_globally_positioned(move |rect| placed.set(rect))
+        .drag_and_drop_target(
+            |event| matches!(event.drag_data(), Some(DragData::FilesList(_))),
+            PageFiles {
+                operations: events::operations(),
+                area,
+            },
+        )
 }

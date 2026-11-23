@@ -325,10 +325,69 @@ without a user systemd start everything as before.
 A page's paint used to be turned from BGRA to RGBA by a JavaScript loop over
 every pixel, written whole into its shared file, copied out by the window into
 a new buffer and copied again for the renderer. The helper now writes the
-engine's bytes as they are and only the rows that changed, and the window
-swaps red and blue while copying into a reused buffer it hands the renderer
-without a copy (see [browser.md](browser.md)). On one 1080p paint, measured by
-the last test of `helpers/electron-browser/test/surface.test.js` with
-`npm test`, the helper's side went from about 4.2 ms (swizzle and whole
-write) to about 0.7 ms for a whole repaint and under 0.05 ms for a blinking
-caret.
+engine's bytes as they are and only the rows that changed (see
+[browser.md](browser.md)). On one 1080p paint, measured by the last test of
+`helpers/electron-browser/test/surface.test.js` with `npm test`, the helper's
+side went from about 4.2 ms (swizzle and whole write) to about 0.7 ms for a
+whole repaint and under 0.05 ms for a blinking caret.
+
+On the window's side nothing reorders bytes any more: the renderer keeps a
+page in a BGRA texture (`rustle::PixelFormat::Bgra8`). Each `Painted` report
+carries the paint's dirty rectangle, the window copies only the rectangle the
+paints since its spare buffer changed, and the renderer writes only the
+rectangle that changed since the picture its texture holds
+(`ImageData::changed_since`, `queue.write_texture` of that rectangle). Two
+ignored tests measure it, on a machine busy with other builds, so the numbers
+are ranges over runs:
+
+```sh
+CARGO_TARGET_DIR=build cargo test -p pm-browser --release -- --ignored --nocapture surface_read_cost
+cargo test -p rustle-wgpu --release -- --ignored --nocapture live_picture_upload_cost   # in rustle
+```
+
+| Per paint, window side | 1080p before | 1080p after | 4K before | 4K after |
+| ---------------------- | ------------ | ----------- | --------- | -------- |
+| Copy out of the file   | 0.8-2.6 ms (whole, swapped) | 0.3-0.6 ms whole, 0.0001 ms caret | 5.4-7.8 ms | 2.6-3.8 ms whole, 0.0001 ms caret |
+| Upload to the texture  | 1.0-1.3 ms (whole RGBA) | 1.0-1.4 ms whole BGRA, 0.03 ms caret, 0.14-0.18 ms a tenth of the rows | 4.1-4.8 ms | 4.0-5.0 ms whole, 0.02-0.06 ms caret, 0.44-0.53 ms a tenth |
+
+A whole repaint now costs about the copy and the upload of the picture once
+each (about 1.3-2 ms at 1080p, 6.6-9 ms at 4K, against 1.8-3.9 ms and
+9.5-12.6 ms before); a caret blinking, a spinner or a hover costs a few
+hundredths of a millisecond instead of a whole picture.
+
+The window still copies the changed rectangle once out of the shared file
+before the renderer uploads it. The renderer uploads later, on its own frame,
+while the helper may already be writing the next paint into that file, so the
+copy is what lets the reader check the file's counter and throw away a torn
+picture; with only the changed rectangle copied it costs little.
+
+### Shared GPU textures
+
+Electron 45 can paint offscreen into a GPU texture instead of a bitmap
+(`webPreferences.offscreen.useSharedTexture`, the `paint` event's
+`texture.textureInfo.handle`). It is not used, for these reasons:
+
+- The handle is local to the helper. On Linux it is a set of dmabuf file
+  descriptors (`nativePixmap.planes[].fd`), which reach another process only
+  over a Unix socket with `SCM_RIGHTS` or with `pidfd_getfd`; the window talks
+  to the helper over loopback TCP, on every system alike. On macOS it is an
+  `IOSurfaceRef` that Electron documents as not global, which reaches another
+  process only through a Mach port, which Node cannot send without a native
+  module of our own. On Windows it is an NT handle to be duplicated into the
+  window's process.
+- wgpu has no portable way to import such memory. It needs unsafe backend code
+  per platform: Vulkan with `VK_EXT_external_memory_dma_buf` and DRM format
+  modifiers (and something else again on the GL backend) on Linux, Metal
+  textures made from an IOSurface on macOS, and D3D12 shared handles on
+  Windows, each brought into wgpu with `create_texture_from_hal`, and rustle
+  would have to expose that to its users.
+- Every texture has to be given back to the engine (`texture.release()`) soon,
+  or the engine runs out and stops painting; across two processes that is a
+  round trip per paint, and the window would have to wait on a GPU fence the
+  handle does not carry before sampling it.
+
+The bitmap path now moves only what changed, so a page painting steadily
+costs well under a millisecond a frame outside whole repaints. Shared
+textures would remove the copies of whole repaints and of video, and are worth
+it only with a native module in the helper and per-backend import code in
+rustle, behind this path as the fallback.

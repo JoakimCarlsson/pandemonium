@@ -6,7 +6,7 @@
 
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { shortcutEdit } = require('../src/input');
+const { protocolKey, shortcutEdit } = require('../src/input');
 
 /** The bit the window sets for the shortcut key on this platform. */
 const SHORTCUT = process.platform === 'darwin' ? 128 : 4;
@@ -36,4 +36,24 @@ test('a letter without the shortcut key or with alt is no shortcut', () => {
   assert.equal(shortcutEdit(press('C', 0)), null);
   assert.equal(shortcutEdit(press('C', SHORTCUT | 8)), null);
   assert.equal(shortcutEdit(press('C', SHORTCUT | 2)), null);
+});
+
+test('a key sent through the protocol carries its DOM key and code, and text only while it types', () => {
+  assert.deepEqual(protocolKey({ code: 65, pressed: true, modifiers: 0, text: 'a' }), {
+    type: 'keyDown',
+    modifiers: 0,
+    windowsVirtualKeyCode: 65,
+    nativeVirtualKeyCode: 65,
+    key: 'a',
+    code: 'KeyA',
+    text: 'a',
+    unmodifiedText: 'a',
+  });
+  const slash = protocolKey({ code: 191, pressed: true, modifiers: SHORTCUT, text: null });
+  assert.equal(slash.type, 'rawKeyDown');
+  assert.equal(slash.key, '/');
+  assert.equal(slash.code, 'Slash');
+  assert.equal(slash.text, undefined);
+  assert.equal(protocolKey({ code: 37, pressed: false, modifiers: 0, text: null }).key, 'ArrowLeft');
+  assert.equal(protocolKey({ code: 13, pressed: true, modifiers: 0, text: '\r' }).key, 'Enter');
 });

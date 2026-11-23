@@ -10,7 +10,7 @@ use crate::input::{Button, Cursor, Key, Modifiers};
 use crate::life::{Lifecycle, Popup};
 use crate::link::{Copied, Link, Notice, PageState};
 use crate::wire::{
-    Capture, CaptureKind, EditAction, PickedElement, Request, ToolResult, ZoomAction,
+    Caller, Capture, CaptureKind, EditAction, PickedElement, Request, ToolResult, ZoomAction,
 };
 
 /// A page open in the helper, painted into [`Frame`]s instead of a window.
@@ -32,8 +32,27 @@ impl View {
         height: u32,
         scale: f32,
     ) -> Result<Self, Error> {
+        Self::open_in(engine, url, (width, height, scale), None)
+    }
+
+    /// Opens `url` in a page of `width` by `height` logical pixels shown at display `scale`, in the engine's profile `partition`, or the shared one when there is none.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Helper`] when the helper failed, or when a profile is named and the helper cannot open pages in one, as helpers released before profiles cannot: such a page would land in the shared profile.
+    pub fn open_in(
+        engine: &Engine,
+        url: &str,
+        (width, height, scale): (u32, u32, f32),
+        partition: Option<&str>,
+    ) -> Result<Self, Error> {
         if let Some(failure) = engine.failure() {
             return Err(Error::Helper(failure));
+        }
+        if partition.is_some() && !engine.partitions() {
+            return Err(Error::Helper(
+                "This version of the browser cannot keep a tab's data apart. Update the embedded browser in Settings to use private tabs and project profiles.".to_owned(),
+            ));
         }
         let link = engine.link();
         let (page, state) = link.register();
@@ -43,6 +62,7 @@ impl View {
             width,
             height,
             scale,
+            partition: partition.map(str::to_owned),
         });
         Ok(Self { page, link, state })
     }
@@ -251,12 +271,38 @@ impl View {
     }
 
     /// Runs the tool `tool` of an agent against the page, given `arguments` as JSON text; the answer comes from [`View::take_tool_results`].
-    pub fn tool(&self, call: u64, tool: &str, arguments: &str) {
+    ///
+    /// `caller` names the agent session that made the call, whose recording keeps it.
+    pub fn tool(&self, call: u64, tool: &str, arguments: &str, caller: &Caller) {
         self.link.send(&Request::Tool {
             page: self.page,
             call,
             tool: tool.to_owned(),
             arguments: arguments.to_owned(),
+            session: caller.session.clone(),
+            session_name: caller.name.clone(),
+        });
+    }
+
+    /// Has the recording of `caller`'s session keep the call `call` of `tool`, which the window answered itself with `ok` and `text`, with a screenshot of this page after it when `picture`; the step comes from [`View::take_tool_results`] when pictured, and nothing comes when the session is not recorded. Without `picture` the helper is only reached through this page, the step is kept without a picture and the window is not told of it.
+    pub fn record_step(
+        &self,
+        call: u64,
+        tool: &str,
+        arguments: &str,
+        (ok, text): (bool, &str),
+        caller: &Caller,
+        picture: bool,
+    ) {
+        self.link.send(&Request::RecordStep {
+            page: if picture { self.page } else { 0 },
+            call,
+            tool: tool.to_owned(),
+            arguments: arguments.to_owned(),
+            ok,
+            text: text.to_owned(),
+            session: caller.session.clone(),
+            session_name: caller.name.clone(),
         });
     }
 
@@ -265,7 +311,7 @@ impl View {
         self.state.take_tools()
     }
 
-    /// Gives the helper the reader's answer to the question `id` of the page; the answer holds for that origin until the helper ends.
+    /// Gives the helper the reader's answer to the question `id` of the page; the answer holds for that origin in the page's profile until the helper ends, or until the profile closes when it is kept in memory only, such as the private one.
     pub fn answer_permission(&self, id: u64, allow: bool) {
         self.link.send(&Request::PermissionAnswer {
             page: self.page,
@@ -294,9 +340,16 @@ impl View {
 
     /// Puts `text` where the page's selection is, in place of what is marked, as pasting the window's clipboard does.
     pub fn paste_text(&self, text: &str) {
+        self.paste_rich(text, None, &[]);
+    }
+
+    /// Pastes what the window's clipboard held into the page: `text`, with the rich text `html` and the files at `paths` when it held them, which the page is offered first as a paste event of its own, so rich editors keep the formatting and upload fields take the files; a page that does not take them gets the HTML in an editable region and the text in a plain field.
+    pub fn paste_rich(&self, text: &str, html: Option<&str>, paths: &[String]) {
         self.link.send(&Request::PasteText {
             page: self.page,
             text: text.to_owned(),
+            html: html.map(str::to_owned),
+            files: paths.to_vec(),
         });
     }
 

@@ -131,6 +131,8 @@ fn tabs_survive_a_restart() {
         host: None,
         agent: true,
         locked: true,
+        title: String::new(),
+        pinned: false,
     };
     restored.restore_browser(&[saved], 7, false, 0.0, false);
     let browser = restored.browser.as_ref().unwrap();
@@ -193,4 +195,45 @@ fn a_sealed_tab_is_kept_from_agents_and_not_saved() {
     state.browser_tab_unsealed(id);
     let browser = state.browser.as_ref().unwrap();
     assert!(!browser.locked && browser.sealed.is_none());
+}
+
+/// Pinning a tab moves it to the start of the strip and keeps the tab shown; the strip draws the pinned tabs apart from the ones it scrolls through; pins and titles are kept across a restart.
+#[test]
+fn pinned_tabs_come_first_and_are_kept() {
+    let mut state = opened();
+    state.browser_tab_opened("http://localhost:4000", None, false, true);
+    let browser = state.browser.as_mut().unwrap();
+    browser.tabs[1].title = "Four".to_owned();
+    browser.toggle_pin(1);
+    assert!(browser.tabs[0].pinned);
+    assert_eq!(browser.tabs[0].title, "Four");
+    assert_eq!(browser.active, 0);
+    assert_eq!(browser.pinned_count(), 1);
+    let (window, _) = browser.strip_window(4000.0);
+    assert_eq!(window, 1..2);
+    let (tabs, active, tools, width) = state.browser_saved().unwrap();
+    assert!(tabs[0].pinned && tabs[0].title == "Four");
+    let mut restored = WorkspaceState::sample();
+    restored.restore_browser(&tabs, active, tools, width, true);
+    let browser = restored.browser.as_ref().unwrap();
+    assert!(browser.tabs[0].pinned && !browser.tabs[1].pinned);
+    assert_eq!(browser.tabs[0].label(), "Four");
+    assert_eq!(browser.active, 0);
+}
+
+/// A private tab is shown when opened, marked private, and neither kept across a restart nor offered to open again once closed.
+#[test]
+fn private_tabs_keep_nothing() {
+    let mut state = opened().browser_pressed(Target::Browser(BrowserEvent::BrowserNewPrivateTab));
+    let browser = state.browser.as_mut().unwrap();
+    assert_eq!(browser.tabs.len(), 2);
+    assert_eq!(browser.active, 1);
+    assert!(browser.tabs[1].private && !browser.tabs[0].private);
+    assert_eq!(browser.tabs[1].label(), "New private tab");
+    browser.tabs[1].address = rustle::TextFieldState::new("https://example.com/");
+    let (tabs, active, _, _) = state.browser_saved().unwrap();
+    assert_eq!((tabs.len(), active), (1, 0));
+    state.browser_close_tab();
+    let browser = state.browser.as_mut().unwrap();
+    assert!(!browser.reopen_closed());
 }

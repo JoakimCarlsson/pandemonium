@@ -44,6 +44,28 @@ function dirtyRows(dirty, scale, height) {
 }
 
 /**
+ * The part of a picture `width` by `height` device pixels that a paint's dirty rectangle covers, as the window is told
+ * it: each side runs from the rectangle's start as device pixels to its end scaled by `scale`, as {@link dirtyRows}
+ * does, so it covers the rectangle whether the engine gave it in logical or in device pixels.
+ * @param {import('electron').Rectangle | undefined} dirty The part that changed, or nothing for the whole picture.
+ * @param {number} scale Device pixels per logical pixel.
+ * @param {number} width The width of the picture, in device pixels.
+ * @param {number} height The height of the picture, in device pixels.
+ * @returns {[number, number, number, number]} The left, top, width and height of the part, in device pixels.
+ */
+function dirtyRect(dirty, scale, width, height) {
+  const factor = Number.isFinite(scale) && scale >= 1 ? scale : 1;
+  const rows = dirtyRows(dirty, scale, height);
+  const tall = rows.bottom - rows.top;
+  if (!dirty || !Number.isFinite(dirty.x) || !Number.isFinite(dirty.width) || dirty.width <= 0) {
+    return [0, rows.top, width, tall];
+  }
+  const left = Math.max(0, Math.min(width, Math.floor(dirty.x)));
+  const right = Math.max(left, Math.min(width, Math.ceil((dirty.x + dirty.width) * factor)));
+  return [left, rows.top, right - left, tall];
+}
+
+/**
  * The smallest band holding both `held` and `added`.
  * @param {Rows | null} held The rows a file still lacks, or nothing.
  * @param {Rows} added The rows that changed since.
@@ -79,9 +101,10 @@ function displayScale(scale) {
 }
 
 /**
- * The device scale every offscreen window paints at. The engine fixes it when it makes a window and, on some
- * desktops, such as Wayland, ignores any other, so pages are painted at 1 into a window sized in device pixels and
- * render at the pane's display scale through their zoom or emulation (see `Page#carryScale` and `applyViewport`).
+ * The device scale offscreen windows paint at. The engine fixes it when it makes a window, so pages are painted at 1
+ * into a window sized in device pixels and render at the pane's display scale through their zoom or emulation (see
+ * `Page#carryScale` and `applyViewport`); only the window of a mobile viewport is made at its ratio instead
+ * (`Page#rebuild`).
  */
 const ENGINE_SCALE = 1;
 
@@ -181,7 +204,7 @@ class Surface {
    * written go in: the rows `dirty` names joined with those of the paint before, since the two files take turns.
    * @param {import('electron').NativeImage} image What the page painted.
    * @param {Electron.Rectangle} [dirty] The part that changed, as the paint event reports it; the whole picture when missing.
-   * @returns {{ buffer: number, generation: number } | null} Which file holds it and which paint it was, or nothing when the image is empty.
+   * @returns {{ buffer: number, generation: number, dirty: [number, number, number, number] } | null} Which file holds it, which paint it was and the part of the picture it changed (left, top, width and height in device pixels), or nothing when the image is empty.
    */
   write(image, dirty) {
     const { width, height, bgra } = pixels(image);
@@ -191,7 +214,8 @@ class Surface {
     }
     if (this.retired.length > 0) this.sweep(false);
     const files = /** @type {NonNullable<Surface['files']>} */ (this.files);
-    const changed = dirtyRows(dirty, width / logicalWidth(image), height);
+    const scale = width / logicalWidth(image);
+    const changed = dirtyRows(dirty, scale, height);
     files.pending = [joinRows(files.pending[0], changed), joinRows(files.pending[1], changed)];
     this.generation += 1;
     const buffer = this.generation % 2;
@@ -208,7 +232,7 @@ class Surface {
     fs.writeSync(descriptor, this.counter, 0, 8, 0);
     files.counters[buffer] = before + 2n;
     files.pending[buffer] = null;
-    return { buffer, generation: this.generation };
+    return { buffer, generation: this.generation, dirty: dirtyRect(dirty, scale, width, height) };
   }
 
   /**
@@ -278,6 +302,7 @@ exports.Surface = Surface;
 exports.pixels = pixels;
 exports.displayScale = displayScale;
 exports.dirtyRows = dirtyRows;
+exports.dirtyRect = dirtyRect;
 exports.joinRows = joinRows;
 exports.ENGINE_SCALE = ENGINE_SCALE;
 exports.deviceSide = deviceSide;

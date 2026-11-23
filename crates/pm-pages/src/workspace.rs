@@ -193,6 +193,9 @@ fn over(state: &WorkspaceState, height: f32, reviewing: bool) {
                 .and_then(|browser| browser.chrome.menu.as_ref()),
         );
     }
+    if let Some(open) = state.browser_tab_menu {
+        pm_components::browser_tab_menu::browser_tab_menu(state, open);
+    }
     adder::adder(state);
     if reviewing {
         state.git_menu_node();

@@ -3,12 +3,14 @@
 /**
  * What keeps the reader safe from the pages: permissions pages ask for, certificates that are not
  * trusted, and files pages start downloading. Everything is refused unless the reader says
- * otherwise, and what the reader says is remembered for the origin until the helper ends.
+ * otherwise, and what the reader says is remembered for the origin in that profile until the helper ends, or until
+ * the profile closes when it is kept in memory only, such as the private one.
  */
 
-const { app, desktopCapturer, session, shell, webContents } = require('electron');
+const { app, desktopCapturer, shell, webContents } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const partitions = require('./partitions');
 
 /** @typedef {import('./page').Page} Page */
 /** @typedef {import('./types').Send} Send */
@@ -39,7 +41,7 @@ const ASKABLE = {
  * What each question is about and how it ends, by the number the window knows it by.
  * @typedef {object} Question
  * @property {number} page The page that asked.
- * @property {string[]} keys What the reader's answer is remembered under, such as `https://example.com|camera`.
+ * @property {string[]} keys What the reader's answer is remembered under, such as `persist:project-00ff\nhttps://example.com|camera`: the profile, the origin and the thing.
  * @property {string} words What the question says it is about.
  * @property {((allow: boolean) => void)[]} callbacks The engine's callbacks waiting for the answer.
  * @property {NodeJS.Timeout} timer Ends the question with a no when it is not answered.
@@ -52,7 +54,8 @@ const ASKABLE = {
 const open = new Map();
 
 /**
- * What the reader answered, by origin and thing, for as long as the helper runs.
+ * What the reader answered, by profile, origin and thing, as {@link answerKey} writes them, for as long as the helper
+ * runs or, for a profile kept in memory only, until its last page closes.
  * @type {Map<string, boolean>}
  */
 const remembered = new Map();
@@ -83,6 +86,31 @@ function originOf(url) {
     return address.protocol === 'http:' || address.protocol === 'https:' ? address.origin : null;
   } catch (_) {
     return null;
+  }
+}
+
+/**
+ * What the reader's answer about one thing an origin asked for is remembered under: the same answer in another profile
+ * is another question, so that what the reader allowed in one profile is not allowed in another.
+ * @param {string | undefined} partition The profile of the page that asked; nothing or empty for the shared one.
+ * @param {string} origin The origin that asked.
+ * @param {string} thing What it asked for, such as `camera`.
+ * @returns {string} The key.
+ */
+function answerKey(partition, origin, thing) {
+  return `${partition || ''}\n${origin}|${thing}`;
+}
+
+/**
+ * Forgets every answer the reader gave in the profile `partition`, as when the last page of a profile kept in memory
+ * closed.
+ * @param {string} partition The profile.
+ * @returns {void}
+ */
+function forgetProfile(partition) {
+  const prefix = `${partition}\n`;
+  for (const key of [...remembered.keys()]) {
+    if (key.startsWith(prefix)) remembered.delete(key);
   }
 }
 
@@ -144,7 +172,7 @@ function cancelQuestions(pageId) {
  * @returns {void}
  */
 function decide(page, origin, things, callback) {
-  const keys = things.map((thing) => `${origin}|${thing}`);
+  const keys = things.map((thing) => answerKey(page.partition, origin, thing));
   if (keys.some((key) => remembered.get(key) === false)) return callback(false);
   if (keys.every((key) => remembered.get(key) === true) && !page.agentBusy()) return callback(true);
   const words = things.join(' and ');
@@ -172,11 +200,11 @@ function answerPermission(id, allow) {
 }
 
 /**
- * Has pages refuse what they ask the browser for, such as the camera, the microphone, notifications and the screen, unless the reader allows it when asked.
+ * Has the pages of a profile refuse what they ask the browser for, such as the camera, the microphone, notifications and the screen, unless the reader allows it when asked.
+ * @param {import('electron').Session} pages The profile.
  * @returns {void}
  */
-function guardPermissions() {
-  const pages = session.defaultSession;
+function guardPermissions(pages) {
   pages.setPermissionRequestHandler((contents, permission, callback, details) => {
     if (permission === UNASKED) return callback(true);
     const page = context.pageOf(contents);
@@ -194,7 +222,7 @@ function guardPermissions() {
     const things = permission === 'media' ? kind : thingsOf(permission, info);
     const origin = originOf(requestingOrigin);
     if (!page || !origin || things.length === 0 || page.agentBusy()) return false;
-    return things.every((thing) => remembered.get(`${origin}|${thing}`) === true);
+    return things.every((thing) => remembered.get(answerKey(page.partition, origin, thing)) === true);
   });
   pages.setDevicePermissionHandler(() => false);
   pages.setDisplayMediaRequestHandler((request, callback) => askScreen(request, callback));
@@ -373,9 +401,18 @@ function reserve(folder, name) {
  * A download the helper saves, by the number the window knows it by.
  * @typedef {object} Saving
  * @property {number} page The page that started it.
- * @property {import('electron').DownloadItem} item The engine's download.
+ * @property {Transfer} item The engine's download, or the saving of a whole page that stands in for one.
  * @property {string} target Where it is saved.
  * @property {string} name The name it is saved under.
+ */
+
+/**
+ * What the list of downloads reads of a download: the engine's own, or a saved page that behaves like one.
+ * @typedef {object} Transfer
+ * @property {() => number} getReceivedBytes How many bytes have been written.
+ * @property {() => number} getTotalBytes How many bytes there are in all, or 0 when not known.
+ * @property {() => string} getState `progressing`, `completed`, `cancelled` or `interrupted`.
+ * @property {() => void} cancel Stops it.
  */
 
 /**
@@ -410,11 +447,12 @@ function reportDownload(id, saving, progress) {
 }
 
 /**
- * Saves what pages and their developer tools download into the reader's Downloads folder without a dialog, under a name the helper makes safe and never over an existing file, tells the window how far it got as it goes, and opens nothing. Sealed pages download nothing.
+ * Saves what the pages of a profile and their developer tools download into the reader's Downloads folder without a dialog, under a name the helper makes safe and never over an existing file, tells the window how far it got as it goes, and opens nothing. Sealed pages download nothing.
+ * @param {import('electron').Session} pages The profile.
  * @returns {void}
  */
-function guardDownloads() {
-  session.defaultSession.on('will-download', (_event, item, contents) => {
+function guardDownloads(pages) {
+  pages.on('will-download', (_event, item, contents) => {
     const page = context.pageOf(contents);
     if (!page || page.sealed) {
       item.cancel();
@@ -452,6 +490,45 @@ function guardDownloads() {
       reportDownload(id, saving, state === 'completed' ? 'Finished' : state === 'cancelled' ? 'Cancelled' : 'Failed');
     });
   });
+}
+
+/**
+ * Saves a page as a complete web page into the reader's Downloads folder, under a name nothing else has: its document,
+ * named from its title, with the pictures, styles and scripts it uses in a folder beside it. The window is told as it
+ * is of a download, so the save shows in the list of downloads and can be shown in its folder or opened. Sealed pages
+ * are not saved.
+ * @param {Page} page The page.
+ * @returns {Promise<void>} Resolves once the window has been told how the save ended.
+ */
+async function savePage(page) {
+  if (page.sealed || page.contents.isDestroyed()) return;
+  const id = nextDownload;
+  nextDownload += 1;
+  const name = safeName(`${page.contents.getTitle() || 'page'}.html`);
+  /** @type {string} */
+  let state = 'progressing';
+  /** @type {Transfer} */
+  const item = {
+    getReceivedBytes: () => (state === 'completed' && fs.existsSync(saving.target) ? fs.statSync(saving.target).size : 0),
+    getTotalBytes: () => item.getReceivedBytes(),
+    getState: () => state,
+    cancel: () => {},
+  };
+  /** @type {Saving} */
+  const saving = { page: page.id, item, target: '', name };
+  try {
+    saving.target = reserve(app.getPath('downloads'), name);
+    saving.name = path.basename(saving.target);
+    downloads.set(id, saving);
+    reportDownload(id, saving, 'Running');
+    await page.contents.savePage(saving.target, 'HTMLComplete');
+    state = 'completed';
+    reportDownload(id, saving, 'Finished');
+  } catch {
+    state = 'interrupted';
+    if (saving.target) fs.rmSync(saving.target, { force: true });
+    reportDownload(id, saving, 'Failed');
+  }
 }
 
 /**
@@ -509,26 +586,33 @@ function forget(pageId) {
 }
 
 /**
- * Puts the helper's guards in place: permissions, certificates and downloads.
+ * Puts the helper's guards in place: permissions and downloads in every profile pages live in, now and as each is made, and certificates.
  * @param {typeof context} where Where to report, and how to find the page of a window's contents.
  * @returns {void}
  */
 function install(where) {
   context = where;
-  guardPermissions();
+  partitions.onSession((pages) => {
+    guardPermissions(pages);
+    guardDownloads(pages);
+  });
+  partitions.onRelease(forgetProfile);
   guardCertificates();
-  guardDownloads();
 }
 
 module.exports = {
+  answerKey,
   answerPermission,
   cancelDownload,
   chooseCertificate,
   chooseScreen,
   forget,
+  forgetProfile,
   install,
+  remembered,
   reserve,
   safeName,
+  savePage,
   showDownload,
   watch,
 };

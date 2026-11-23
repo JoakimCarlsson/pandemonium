@@ -238,6 +238,8 @@ fn saved_browser(
                 host: tab.host,
                 agent: tab.agent,
                 locked: tab.locked,
+                title: tab.title,
+                pinned: tab.pinned,
             })
             .collect(),
         active,
@@ -256,6 +258,8 @@ impl SavedBrowser {
                 host: self.host.clone(),
                 agent: false,
                 locked: false,
+                title: String::new(),
+                pinned: false,
             }]
         } else {
             self.tabs
@@ -265,6 +269,8 @@ impl SavedBrowser {
                     host: tab.host.clone(),
                     agent: tab.agent,
                     locked: tab.locked,
+                    title: tab.title.clone(),
+                    pinned: tab.pinned,
                 })
                 .collect()
         };
@@ -286,6 +292,12 @@ struct SavedBrowserTab {
     /// Whether it was locked against agents.
     #[serde(default)]
     locked: bool,
+    /// The title its page had.
+    #[serde(default)]
+    title: String,
+    /// Whether it was pinned.
+    #[serde(default)]
+    pinned: bool,
 }
 
 /// The panes of the main area as they were left.

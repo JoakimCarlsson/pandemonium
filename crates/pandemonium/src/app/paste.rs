@@ -44,7 +44,7 @@ impl App {
 }
 
 /// Saves `picture` as a PNG in the pasted folder of the data directory and returns where.
-fn save_picture(picture: rustle::ClipboardImage) -> Option<PathBuf> {
+pub(super) fn save_picture(picture: rustle::ClipboardImage) -> Option<PathBuf> {
     let pixels = image::RgbaImage::from_raw(picture.width, picture.height, picture.rgba)?;
     let folder = pm_store::data_directory()?.join(PASTED);
     std::fs::create_dir_all(&folder).ok()?;

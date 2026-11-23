@@ -9,7 +9,7 @@ use crate::error::Error;
 use crate::install;
 use crate::link::Link;
 use crate::render::Rendered;
-use crate::wire::{Request, SEALED_PAGES};
+use crate::wire::{PARTITIONS, Request, SEALED_PAGES};
 
 /// How long the helper is given, once connected, to say what it supports and that it is ready; one that says nothing in that time is taken to support nothing beyond what every helper does.
 const READY_WITHIN: std::time::Duration = std::time::Duration::from_secs(10);
@@ -184,6 +184,14 @@ impl Engine {
         });
     }
 
+    /// Tells the helper what it does for the reader's privacy: when `block_trackers`, it blocks ads and trackers; when `save_passwords`, it offers to keep logins and fills them in. A helper that does neither ignores it.
+    pub fn set_privacy(&self, block_trackers: bool, save_passwords: bool) {
+        self.link.send(&Request::Privacy {
+            block_trackers,
+            save_passwords,
+        });
+    }
+
     /// Asks the helper to render the document `html`, sealed from the network, at a viewport of `width` by `height` CSS pixels and display `scale` into the PNG file `path`; how it went comes back from [`Engine::take_rendered`] under `ticket`.
     pub fn render_html(
         &self,
@@ -205,6 +213,11 @@ impl Engine {
     /// Whether the helper opens and renders sealed documents, as it announced when it started; an older helper does not, and ignores [`Engine::render_html`] and [`crate::View::open_html`].
     pub fn sealed_pages(&self) -> bool {
         self.link.supports(SEALED_PAGES).unwrap_or(false)
+    }
+
+    /// Whether the helper opens pages in the profile [`crate::View::open_in`] names, as it announced when it started; an older helper does not, and would open them in its shared profile.
+    pub fn partitions(&self) -> bool {
+        self.link.supports(PARTITIONS).unwrap_or(false)
     }
 
     /// The renders asked for with [`Engine::render_html`] that ended since the last call.

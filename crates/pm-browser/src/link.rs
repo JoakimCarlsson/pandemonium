@@ -6,7 +6,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::chrome::PageReport;
+use crate::damage::Damage;
 use crate::frame::Frame;
+use crate::frame::Region;
 use crate::input::Cursor;
 use crate::life::{Lifecycle, LoadFailure, Popup};
 use crate::render::Rendered;
@@ -14,6 +16,9 @@ use crate::surface::SurfaceReader;
 use crate::wire::{
     Capture, CertificateInfo, DownloadState, Event, PickedElement, Request, ToolResult, line,
 };
+
+/// Pixels of a replaced picture kept for reuse, with the paint they hold when they are known to hold a whole one.
+type Spare = (Arc<[u8]>, Option<u64>);
 
 /// What the reader copied or cut in a page, for the window to put on its clipboard.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -87,8 +92,11 @@ pub(crate) struct PageState {
     surfaces: Mutex<Option<[SurfaceReader; 2]>>,
     /// The size of a picture in those files.
     size: Mutex<(u32, u32)>,
-    /// The pixels of a picture that was replaced, kept to copy the next one into once nothing else holds them.
-    spare: Mutex<Option<Arc<[u8]>>>,
+    /// The pixels of a picture that was replaced, kept to copy the next one into once nothing else holds them, with
+    /// the paint they hold when they are known to hold a whole one.
+    spare: Mutex<Option<Spare>>,
+    /// Which parts of the picture the recent paints changed.
+    damage: Mutex<Damage>,
     /// What the page reported for the pane to show around it that the window has not taken yet, oldest first.
     reports: Mutex<Vec<PageReport>>,
     /// Where the page last said its caret or the text being composed is: left, top, width and height in logical pixels.
@@ -177,9 +185,10 @@ impl PageState {
     /// The newest picture, copied out of the shared files only when the page has painted since the last copy.
     ///
     /// The copy goes into the pixels of the picture before the one shown when nothing else holds them any more,
-    /// so a page painting steadily copies into two buffers in turn instead of allocating one a paint. The files and
-    /// their size are read under one lock, so a picture is never labelled with the size of files it was not copied
-    /// from while the page is resized.
+    /// so a page painting steadily copies into two buffers in turn instead of allocating one a paint, and only the
+    /// part the paints since that picture changed is copied, as the helper writes. The files and their size are read
+    /// under one lock, so a picture is never labelled with the size of files it was not copied from while the page is
+    /// resized.
     pub(crate) fn frame(&self) -> Option<Frame> {
         let latest = *self.latest.lock().ok()?;
         let mut held = self.frame.lock().ok()?;
@@ -201,22 +210,41 @@ impl PageState {
             return held.clone();
         };
         let mut spare = self.spare.lock().ok()?;
-        let mut pixels = spare
+        let damage = self.damage.lock().ok()?;
+        let (mut pixels, holds) = spare
             .take()
-            .filter(|pixels| pixels.len() == reader.len())
-            .and_then(|mut pixels| Arc::get_mut(&mut pixels).is_some().then_some(pixels))
-            .unwrap_or_else(|| std::iter::repeat_n(0, reader.len()).collect());
-        let read = Arc::get_mut(&mut pixels).is_some_and(|out| reader.read_into(out));
+            .filter(|(pixels, _)| pixels.len() == reader.len())
+            .and_then(|(mut pixels, holds)| {
+                Arc::get_mut(&mut pixels)
+                    .is_some()
+                    .then_some((pixels, holds))
+            })
+            .unwrap_or_else(|| (std::iter::repeat_n(0, reader.len()).collect(), None));
+        let region = holds
+            .and_then(|from| damage.since(from, generation))
+            .unwrap_or(Region::whole(size.0, size.1));
+        let changed = held
+            .as_ref()
+            .filter(|frame| (frame.width, frame.height) == size)
+            .and_then(|frame| {
+                damage
+                    .since(frame.generation, generation)
+                    .map(|region| (frame.generation, region))
+            });
+        let read =
+            Arc::get_mut(&mut pixels).is_some_and(|out| reader.read_region_into(out, region));
         if read {
             let replaced = held.replace(Frame {
                 width: size.0,
                 height: size.1,
                 generation,
-                rgba: pixels,
+                pixels,
+                bgra: reader.bgra(),
+                changed,
             });
-            *spare = replaced.map(|frame| frame.rgba);
+            *spare = replaced.map(|frame| (frame.pixels, Some(frame.generation)));
         } else {
-            *spare = Some(pixels);
+            *spare = Some((pixels, None));
         }
         held.clone()
     }
@@ -393,21 +421,29 @@ impl Link {
                     (Some(first), Some(second)) => Some([first, second]),
                     _ => None,
                 };
-                if let (Ok(mut surfaces), Ok(mut size)) = (state.surfaces.lock(), state.size.lock())
-                {
+                if let (Ok(mut surfaces), Ok(mut size), Ok(mut damage)) = (
+                    state.surfaces.lock(),
+                    state.size.lock(),
+                    state.damage.lock(),
+                ) {
                     *surfaces = opened;
                     *size = (width, height);
+                    damage.surface(width, height);
                 }
             }
             Event::Painted {
                 page,
                 buffer,
                 generation,
+                dirty,
             } => {
-                if let Some(state) = self.page(page)
-                    && let Ok(mut latest) = state.latest.lock()
-                {
-                    *latest = Some((buffer, generation));
+                if let Some(state) = self.page(page) {
+                    if let Ok(mut damage) = state.damage.lock() {
+                        damage.painted(generation, dirty);
+                    }
+                    if let Ok(mut latest) = state.latest.lock() {
+                        *latest = Some((buffer, generation));
+                    }
                 }
             }
             Event::Picked { page, element } => {

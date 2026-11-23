@@ -78,15 +78,19 @@ impl Project {
 
     /// The colour of the project's avatar, which the same path always gets.
     pub fn color(&self) -> Color {
-        let hash = self.path.bytes().fold(FNV_OFFSET, |hash, byte| {
-            (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME)
-        });
         Color::in_space(
             LIGHTNESS,
             CHROMA,
-            (hash % 360) as f32,
+            (self.path_hash() % 360) as f32,
             1.0,
             ColorSpaces::OKLCH,
         )
+    }
+
+    /// The FNV-1a hash of where the project is, which the same path always gives, on every machine and in every version.
+    pub fn path_hash(&self) -> u64 {
+        self.path.bytes().fold(FNV_OFFSET, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME)
+        })
     }
 }

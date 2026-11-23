@@ -6,6 +6,7 @@
 
 const { readerZoom } = require('./emulation');
 const { offsetOf } = require('./frames');
+const paste = require('./paste');
 const routing = require('./routing');
 
 /** @typedef {import('./types').Cursor} Cursor */
@@ -346,9 +347,137 @@ function rawKey(contents, key, commands) {
 }
 
 /**
+ * The DOM `key` of the keys whose name differs from Electron's, by Windows virtual-key code.
+ * @type {Readonly<Record<number, string>>}
+ */
+const DOM_NAMES = {
+  32: ' ',
+  37: 'ArrowLeft',
+  38: 'ArrowUp',
+  39: 'ArrowRight',
+  40: 'ArrowDown',
+  106: '*',
+  107: '+',
+  109: '-',
+  110: '.',
+  111: '/',
+  173: 'AudioVolumeMute',
+  174: 'AudioVolumeDown',
+  175: 'AudioVolumeUp',
+  176: 'MediaTrackNext',
+  177: 'MediaTrackPrevious',
+};
+
+/**
+ * The DOM `code`, where the key sits on a US keyboard, of the keys that are not letters, digits, function keys or on
+ * the number pad, by Windows virtual-key code.
+ * @type {Readonly<Record<number, string>>}
+ */
+const DOM_CODES = {
+  8: 'Backspace',
+  9: 'Tab',
+  13: 'Enter',
+  16: 'ShiftLeft',
+  17: 'ControlLeft',
+  18: 'AltLeft',
+  19: 'Pause',
+  20: 'CapsLock',
+  27: 'Escape',
+  32: 'Space',
+  33: 'PageUp',
+  34: 'PageDown',
+  35: 'End',
+  36: 'Home',
+  37: 'ArrowLeft',
+  38: 'ArrowUp',
+  39: 'ArrowRight',
+  40: 'ArrowDown',
+  44: 'PrintScreen',
+  45: 'Insert',
+  46: 'Delete',
+  91: 'MetaLeft',
+  93: 'ContextMenu',
+  106: 'NumpadMultiply',
+  107: 'NumpadAdd',
+  109: 'NumpadSubtract',
+  110: 'NumpadDecimal',
+  111: 'NumpadDivide',
+  144: 'NumLock',
+  145: 'ScrollLock',
+  173: 'AudioVolumeMute',
+  174: 'AudioVolumeDown',
+  175: 'AudioVolumeUp',
+  176: 'MediaTrackNext',
+  177: 'MediaTrackPrevious',
+  178: 'MediaStop',
+  179: 'MediaPlayPause',
+  186: 'Semicolon',
+  187: 'Equal',
+  188: 'Comma',
+  189: 'Minus',
+  190: 'Period',
+  191: 'Slash',
+  192: 'Backquote',
+  219: 'BracketLeft',
+  220: 'Backslash',
+  221: 'BracketRight',
+  222: 'Quote',
+};
+
+/**
+ * The DOM `code` of the key with Windows virtual-key code `code`.
+ * @param {number} code The key's virtual-key code.
+ * @returns {string} Its code, such as `KeyA` or `Slash`, or an empty string when it has none.
+ */
+function domCode(code) {
+  if (code >= 65 && code <= 90) return `Key${String.fromCharCode(code)}`;
+  if (code >= 48 && code <= 57) return `Digit${code - 48}`;
+  if (code >= 96 && code <= 105) return `Numpad${code - 96}`;
+  if (code >= 112 && code <= 135) return `F${code - 111}`;
+  return DOM_CODES[code] || '';
+}
+
+/**
+ * The DOM `key` of a press or release: the text it types, or else its name, a letter in the case Shift gives it.
+ * @param {Key} key The key.
+ * @returns {string} The key, or an empty string when it has no name.
+ */
+function domKey(key) {
+  if (key.text && key.text !== '\r') return key.text;
+  if (DOM_NAMES[key.code]) return DOM_NAMES[key.code];
+  const name = keyName(key.code);
+  if (!name) return '';
+  if (key.code >= 65 && key.code <= 90) return key.modifiers & 2 ? name : name.toLowerCase();
+  if (key.code >= 96 && key.code <= 105) return String(key.code - 96);
+  return name;
+}
+
+/**
+ * The parameters of `Input.dispatchKeyEvent` for a press or release of `key`: a press that types text, while Control
+ * and Command are up, carries it.
+ * @param {Key} key The key.
+ * @returns {import('./types').Json} The parameters.
+ */
+function protocolKey(key) {
+  const types = Boolean(key.pressed && key.text && !(key.modifiers & (CONTROL | COMMAND)));
+  return {
+    type: key.pressed ? (types ? 'keyDown' : 'rawKeyDown') : 'keyUp',
+    modifiers: protocolModifiers(key.modifiers),
+    windowsVirtualKeyCode: key.code,
+    nativeVirtualKeyCode: key.code,
+    key: domKey(key),
+    code: domCode(key.code),
+    ...(types ? { text: key.text, unmodifiedText: key.text } : {}),
+    ...(key.code >= 96 && key.code <= 111 ? { location: 3 } : {}),
+  };
+}
+
+/**
  * Sends a press or release of `key` to the page: an editing shortcut the helper runs itself is handled before this, a
- * macOS editing key goes with its command, a key Electron can name or that types text goes as Electron's events, and
- * any other key with a code goes through the DevTools protocol.
+ * macOS editing key goes with its command, a page with cross-origin frames gets every key through the DevTools
+ * protocol after the pointer events before it, since the engine's own key events reach only its top frame, a key
+ * Electron can name or that types text goes as Electron's events, and any other key with a code goes through the
+ * DevTools protocol.
  * @param {import('electron').WebContents} contents The page's contents.
  * @param {Key} key The key.
  * @returns {void}
@@ -357,6 +486,11 @@ function sendKey(contents, key) {
   const command = macEditing(key);
   if (command && attached(contents)) {
     rawKey(contents, key, [command]);
+    return;
+  }
+  const router = routing.of(contents);
+  if (router && router.hasFrames() && key.code) {
+    void router.key(protocolKey(key));
     return;
   }
   const events = keyEvents(key);
@@ -515,8 +649,9 @@ const EDIT_ACTIONS = {
 };
 
 /**
- * A point the window gave in logical pixels, as the page's window takes it: in its own pixels, which are device pixels
- * since every window is sized in them (see `ENGINE_SCALE` in `surface.js`).
+ * A point the window gave in logical pixels, in the pixels `scale` turns them into: device pixels, which the window of a
+ * page painted at a device scale of 1 is sized in (see `ENGINE_SCALE` in `surface.js`), or the window's own pixels when
+ * it paints at another (`Page#inputScale`).
  * @param {number} x Across, in logical pixels.
  * @param {number} y Down, in logical pixels.
  * @param {number} scale The pane's display scale, device pixels per logical pixel.
@@ -593,10 +728,13 @@ function typeText(contents, text) {
  * @param {import('electron').WebContents} contents The page's contents.
  * @param {{ [name: string]: unknown }} request The request, as the window sent it.
  * @param {(event: import('./types').Event) => void} [send] Reports to the window, as copying does; without it a copy reports nothing.
- * @param {number} [scale] The pane's display scale, device pixels per logical pixel; 1 when not given.
+ * @param {number} [scale] The pane's display scale, device pixels per logical pixel; 1 when not given. Points go to the
+ *   page's router in these pixels.
+ * @param {number} [windowScale] The window's own pixels per logical pixel, which Electron's input events take: the
+ *   pane's scale over the device scale the window paints at; `scale` when not given.
  * @returns {boolean} Whether it was an input request.
  */
-function deliver(contents, request, send = () => {}, scale = 1) {
+function deliver(contents, request, send = () => {}, scale = 1, windowScale = scale) {
   const input = /** @type {InputRequest} */ (request);
   if ('PointerMoved' in input) {
     const body = input.PointerMoved;
@@ -608,7 +746,7 @@ function deliver(contents, request, send = () => {}, scale = 1) {
     }
     contents.sendInputEvent({
       type: body.left ? 'mouseLeave' : 'mouseMove',
-      ...toWindow(body.x, body.y, scale),
+      ...toWindow(body.x, body.y, windowScale),
       modifiers: modifiersOf(body.modifiers),
     });
     return true;
@@ -623,7 +761,7 @@ function deliver(contents, request, send = () => {}, scale = 1) {
     }
     contents.sendInputEvent({
       type: body.pressed ? 'mouseDown' : 'mouseUp',
-      ...toWindow(body.x, body.y, scale),
+      ...toWindow(body.x, body.y, windowScale),
       button,
       clickCount: body.clicks,
       modifiers: modifiersOf(body.modifiers),
@@ -636,7 +774,7 @@ function deliver(contents, request, send = () => {}, scale = 1) {
     const deltaY = typeof body.exact_dy === 'number' ? body.exact_dy : body.dy;
     contents.sendInputEvent({
       type: 'mouseWheel',
-      ...toWindow(body.x, body.y, scale),
+      ...toWindow(body.x, body.y, windowScale),
       deltaX,
       deltaY,
       wheelTicksX: deltaX / NOTCH,
@@ -666,7 +804,11 @@ function deliver(contents, request, send = () => {}, scale = 1) {
     return true;
   }
   if ('PasteText' in input) {
-    typeText(contents, input.PasteText.text);
+    if (paste.isRich(input.PasteText)) {
+      void paste.pasteRich(contents, input.PasteText, typeText);
+    } else {
+      typeText(contents, input.PasteText.text);
+    }
     return true;
   }
   if ('Edit' in input) {
@@ -677,4 +819,4 @@ function deliver(contents, request, send = () => {}, scale = 1) {
   return false;
 }
 
-module.exports = { cursorOf, deliver, keyEvents, keyName, macEditing, modifiersOf, shortcutEdit, toWindow };
+module.exports = { cursorOf, deliver, keyEvents, keyName, macEditing, modifiersOf, protocolKey, shortcutEdit, toWindow };

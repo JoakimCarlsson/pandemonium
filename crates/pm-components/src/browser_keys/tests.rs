@@ -147,7 +147,7 @@ fn zoom_keys_queue_steps() {
     );
 }
 
-/// The keys of moving through tabs and history, the address bar, printing and the developer tools are the browser's.
+/// The keys of moving through tabs and history, the address bar, printing, saving and the developer tools are the browser's.
 #[test]
 fn navigation_keys_are_the_browsers() {
     assert_eq!(
@@ -163,6 +163,10 @@ fn navigation_keys_are_the_browsers() {
     assert_eq!(
         shortcut_of(&control(Key::Character("p".into()), false)),
         Some(Shortcut::Print)
+    );
+    assert_eq!(
+        shortcut_of(&control(Key::Character("s".into()), false)),
+        Some(Shortcut::SavePage)
     );
     assert_eq!(
         shortcut_of(&control(Key::Character("T".into()), true)),

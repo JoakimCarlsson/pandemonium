@@ -232,6 +232,8 @@ pub enum Shot {
     BrowserTabs(bool),
     /// The workspace on a second session, whose browser holds one tab of its own while the first session keeps the tabs of the browser-tabs picture.
     BrowserSessions,
+    /// The workspace with the browser on the tabs of the browser-tabs picture, two of them pinned compact at the start of the strip and a private tab at its end; with the menu over the first pinned tab open when the flag is set.
+    BrowserPinned(bool),
     /// The workspace with the browser on a form whose text field has the keyboard, showing its focus ring, the selected text and the caret.
     BrowserInput,
     /// The workspace with the browser open and the question about clearing cookies and site data asked.
@@ -248,8 +250,18 @@ pub enum Shot {
     BrowserDialog,
     /// The workspace with the browser open and its list of downloads shown: one running, one done and one that failed.
     BrowserDownloads,
+    /// The workspace with the browser open on a sign-in page: the shield counting the ads and trackers blocked, the bar offering to save a login and the saved logins under the field that holds the keyboard.
+    BrowserPrivacy,
+    /// The workspace with the browser open on a sign-in page and the sheet asking the reader to choose a primary password for saved logins, on a system without a keyring.
+    BrowserPrimaryCreate,
+    /// The workspace with the browser open on a sign-in page and the sheet asking for the primary password to unlock saved logins, after a wrong one.
+    BrowserPrimaryUnlock,
+    /// The workspace with the browser open beside the panel of the steps an agent's browser recording kept, an earlier step chosen to replay.
+    BrowserSteps,
     /// The workspace with the browser open and the menu of a right click on a link in a page open.
     BrowserPageMenu,
+    /// The workspace with the browser open on an article shown in reader view, its button pressed in the bar.
+    BrowserReader,
     /// The overview of a project.
     Overview,
     /// The sidebar with the submodules of a project under it, a session working in one, and work being started in another.
@@ -1961,6 +1973,103 @@ fn browser_finding(tools: bool) -> WorkspaceState {
     state
 }
 
+/// A made-up screenshot of a page, `width` by `height`, with a bar across its top in `tint` and lines of grey text below it.
+fn step_picture(width: u32, height: u32, tint: [u8; 3]) -> rustle::ImageData {
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = if y < height / 8 {
+                [tint[0], tint[1], tint[2], 255]
+            } else if y % (height / 10).max(1) > height / 20 && x > width / 12 && x < width * 3 / 4
+            {
+                [200, 200, 200, 255]
+            } else {
+                [247, 247, 247, 255]
+            };
+            pixels.extend_from_slice(&pixel);
+        }
+    }
+    rustle::ImageData::from_rgba(width, height, pixels)
+        .expect("as many pixels as the picture is large")
+}
+
+/// The workspace with the browser on a page and the panel of the steps two agent sessions' recordings kept beside it, the second of five steps chosen; the second step typed a password, which the recording redacted.
+fn browser_steps() -> WorkspaceState {
+    use pm_components::areas::BrowserEvent;
+    use pm_components::browser_steps::AgentStep;
+    let mut state = browser_finding(false);
+    let steps = [
+        (
+            "browser_navigate",
+            r#"{"url":"http://localhost:5173/login"}"#,
+            true,
+            "Loaded http://localhost:5173/login (200), title \"Sign in\".",
+            [51, 103, 209],
+        ),
+        (
+            "browser_type",
+            r#"{"ref":5,"text":"[redacted]"}"#,
+            true,
+            "Typed into the field.",
+            [51, 103, 209],
+        ),
+        (
+            "browser_click",
+            r#"{"selector":"button[type=submit]"}"#,
+            true,
+            "Clicked at 220, 310.",
+            [46, 160, 67],
+        ),
+        (
+            "browser_network",
+            r#"{"wait_for":"/api/session"}"#,
+            false,
+            "No request matching \"/api/session\" finished in 10000 ms.",
+            [46, 160, 67],
+        ),
+        (
+            "browser_console",
+            r#"{"level":"error"}"#,
+            true,
+            "#3 10:04:05.120 [error] Uncaught TypeError: user is undefined",
+            [207, 34, 46],
+        ),
+    ];
+    for (index, (tool, arguments, ok, text, tint)) in steps.into_iter().enumerate() {
+        let (session, session_name, folder, number) = if index < 3 {
+            (
+                "session-1",
+                "Fix the sign-in form",
+                "/home/ada/recordings/2026-11-22T10-04-00-fix-the-sign-in-form-session-1",
+                index + 1,
+            )
+        } else {
+            (
+                "session-2",
+                "Check console errors",
+                "/home/ada/recordings/2026-11-22T10-05-10-check-console-errors-session-2",
+                index - 2,
+            )
+        };
+        state.browser_step_recorded(
+            folder,
+            AgentStep {
+                index: number as u32,
+                tool: tool.to_owned(),
+                arguments: arguments.to_owned(),
+                ok,
+                text: text.to_owned(),
+                url: "http://localhost:5173/login".to_owned(),
+                session: session.to_owned(),
+                session_name: session_name.to_owned(),
+                thumbnail: Some(step_picture(160, 100, tint)),
+                picture: Some(step_picture(640, 400, tint)),
+            },
+        );
+    }
+    state.handle(Event::Browser(BrowserEvent::BrowserStep(1)))
+}
+
 /// The picture of a page with one text field that has the keyboard: a ring round the field, its text selected up to a caret.
 fn input_page(width: u32, height: u32) -> rustle::ImageData {
     let (left, right, top, bottom) = (40_u32, 400_u32, 60_u32, 100_u32);
@@ -2082,6 +2191,37 @@ fn browser_tabs(many: bool) -> WorkspaceState {
     if let Some(browser) = state.browser.as_mut() {
         browser.tabs[3].locked = true;
         browser.active = 3;
+    }
+    state
+}
+
+/// The workspace with the browser on the tabs of [`browser_tabs`], the dashboard and the locked staging tab pinned to the start of the strip, a private tab opened at its end and the staging tab shown, and the menu over the first pinned tab open when `menu`.
+fn browser_pinned(menu: bool) -> WorkspaceState {
+    let mut state = browser_tabs(false);
+    let staging = state.browser.as_mut().map(|browser| {
+        let staging = browser.tabs[3].id;
+        browser.toggle_pin(1);
+        browser.toggle_pin(3);
+        staging
+    });
+    state.browser_new_private_tab();
+    if let Some(id) = state.browser.as_ref().map(|browser| browser.active_id()) {
+        state.browser_tab_painted(
+            id,
+            None,
+            "Private search",
+            "https://duckduckgo.com/?q=pandemonium",
+            pm_components::browser::Pointer::Arrow,
+            false,
+        );
+    }
+    if let Some(browser) = state.browser.as_mut()
+        && let Some(index) = staging.and_then(|id| browser.tab_index(id))
+    {
+        browser.select(index);
+    }
+    if menu {
+        state = state.with_browser_tab_menu(0, (300.0, 84.0));
     }
     state
 }
@@ -3469,6 +3609,7 @@ impl Shot {
             Self::BrowserFindTools => Screen::Workspace(browser_finding(true)),
             Self::BrowserTabs(many) => Screen::Workspace(browser_tabs(many)),
             Self::BrowserSessions => Screen::Workspace(browser_sessions()),
+            Self::BrowserPinned(menu) => Screen::Workspace(browser_pinned(menu)),
             Self::BrowserInput => Screen::Workspace(browser_input()),
             Self::BrowserClear => {
                 let mut state = browser_finding(false);
@@ -3537,6 +3678,34 @@ impl Shot {
                 }
                 Screen::Workspace(state)
             }
+            Self::BrowserPrivacy => {
+                use pm_components::browser_privacy::{LoginChoices, PasswordAsk};
+                let mut state = workspace_sample();
+                state.open_browser("https://accounts.example.com/sign-in");
+                let tab = state.browser.as_ref().map_or(0, |browser| browser.active_id());
+                state.browser_blocking(tab, true, 14);
+                state.browser_password_offered(
+                    tab,
+                    Some(PasswordAsk {
+                        id: 3,
+                        origin: "https://accounts.example.com".to_owned(),
+                        username: "ada@example.com".to_owned(),
+                        update: false,
+                    }),
+                    0,
+                );
+                state.browser_login_field(
+                    tab,
+                    Some(LoginChoices {
+                        x: 48.0,
+                        y: 120.0,
+                        width: 280.0,
+                        height: 32.0,
+                        usernames: vec!["ada@example.com".to_owned(), "grace@example.com".to_owned()],
+                    }),
+                );
+                Screen::Workspace(state)
+            }
             Self::BrowserDownloads => {
                 use pm_components::browser_chrome::{DownloadEntry, DownloadStatus};
                 let mut state = workspace_sample();
@@ -3556,6 +3725,27 @@ impl Shot {
                         status,
                     });
                 }
+                Screen::Workspace(state)
+            }
+            Self::BrowserPrimaryCreate | Self::BrowserPrimaryUnlock => {
+                use pm_components::browser_privacy::PrimaryAsk;
+                let mut state = workspace_sample();
+                state.open_browser("https://accounts.example.com/sign-in");
+                let tab = state.browser.as_ref().map_or(0, |browser| browser.active_id());
+                let create = matches!(self, Self::BrowserPrimaryCreate);
+                let problem = if create { "" } else { "That is not the primary password." };
+                let ask = PrimaryAsk::new(create, "https://accounts.example.com", problem);
+                ask.password.set_text("hunter22");
+                state.browser_primary_asked(tab, Some(ask));
+                Screen::Workspace(state)
+            }
+            Self::BrowserSteps => Screen::Workspace(browser_steps()),
+            Self::BrowserReader => {
+                let mut state = workspace_sample();
+                state.open_browser("https://example.com/blog/the-long-walk");
+                let tab = state.browser.as_ref().map_or(0, |browser| browser.active_id());
+                state.browser_readable(tab, true);
+                state.browser_reading(tab, true);
                 Screen::Workspace(state)
             }
             Self::BrowserPageMenu => {
@@ -6412,7 +6602,6 @@ mod performance_tests {
 pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Result<(), String> {
     use pm_browser::{Button as Mouse, Engine, Key as Typed, Modifiers as Held, View};
     use pm_components::browser::Pointer;
-    use rustle::ImageData;
     use std::time::Duration;
 
     let (width, height) = (WIDTH as f32, HEIGHT as f32);
@@ -6479,9 +6668,8 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
         pump(1.0);
     }
     let picture = |view: &View, texture: rustle::ImageKey| {
-        view.frame().and_then(|frame| {
-            ImageData::keyed(texture, frame.width, frame.height, frame.rgba.clone())
-        })
+        view.frame()
+            .and_then(|frame| crate::app::frame_picture(texture, &frame, (0, 0)))
     };
     let title = page.title();
     let Screen::Workspace(state) = &mut screen;

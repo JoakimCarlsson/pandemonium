@@ -47,8 +47,25 @@
  */
 
 /**
- * What running a tool came to.
- * @typedef {ToolOutcome & { call: number }} ToolResult
+ * One step of a recording of what agents did with the browser, as `browser_record` keeps it.
+ * @typedef {object} RecordedStep
+ * @property {string} folder The folder of the recording it belongs to.
+ * @property {number} index Its number in the recording, from 1.
+ * @property {string} tool The tool that was called, such as `browser_click`.
+ * @property {string} arguments What the agent gave it, as JSON text, cut short.
+ * @property {boolean} ok Whether the tool worked.
+ * @property {string} text The start of what the tool answered.
+ * @property {number} at When the tool ended, in milliseconds since the epoch.
+ * @property {number} page The helper's number of the page it ran on.
+ * @property {string} url The address of the page after it ran.
+ * @property {string} picture The file of the screenshot taken after it ran, in the recording's folder, or empty when none could be taken.
+ * @property {string} session The key of the agent session whose recording it belongs to, as the window names it; empty when the window named none.
+ * @property {string} session_name What that session is called.
+ */
+
+/**
+ * What running a tool came to; `step` is there while a recording is under way.
+ * @typedef {ToolOutcome & { call: number, step?: RecordedStep }} ToolResult
  */
 
 /**
@@ -98,8 +115,9 @@
  */
 
 /**
- * @typedef {PageBody & { url: string, width: number, height: number, scale: number }} OpenBody
- * Opens `url` in a new page of `width` by `height` logical pixels at display `scale`.
+ * @typedef {PageBody & { url: string, width: number, height: number, scale: number, partition?: string }} OpenBody
+ * Opens `url` in a new page of `width` by `height` logical pixels at display `scale`, in the profile `partition` names:
+ * one starting `persist:` is kept on disk, any other in memory only; nothing or empty is the shared profile.
  */
 
 /**
@@ -149,13 +167,27 @@
  */
 
 /**
+ * @typedef {PageBody & { text: string, html?: string | null, files?: string[] }} PasteTextBody
+ * Pastes what the window's clipboard held: its text, with its rich text as HTML and the paths of files when it held them.
+ */
+
+/**
  * @typedef {PageBody & { text: string }} ComposeBody
  * Shows text an input method is composing; empty text ends the composition without typing.
  */
 
 /**
- * @typedef {PageBody & { call: number, tool: string, arguments: string }} ToolBody
- * Runs a tool an agent called against the page; `arguments` is JSON text.
+ * @typedef {PageBody & { call: number, tool: string, arguments: string, session?: string, session_name?: string }} ToolBody
+ * Runs a tool an agent called against the page; `arguments` is JSON text. `session` is the key of the agent session that
+ * made the call, which its recording is kept under, and `session_name` what that session is called; both are empty or
+ * absent from windows that name no session.
+ */
+
+/**
+ * @typedef {PageBody & { call: number, tool: string, arguments: string, ok: boolean, text: string, session?: string, session_name?: string }} RecordStepBody
+ * Keeps a tool call the window answered itself, such as `browser_tabs`, in the recording of the session that made it,
+ * with a screenshot of the page after it; the step comes back as `ToolDone` with the same `call`, and nothing comes back
+ * when the session is not recorded. `page` is 0 when no page is to be pictured.
  */
 
 /**
@@ -197,6 +229,7 @@
  *   | { Resize: ResizeBody }
  *   | { Focus: FocusBody }
  *   | { Tool: ToolBody }
+ *   | { RecordStep: RecordStepBody }
  *   | { Pick: PickBody }
  *   | { Find: FindBody }
  *   | { StopFind: PageBody }
@@ -222,13 +255,18 @@
  *   | { Key: KeyBody }
  *   | { CommitText: CommitTextBody }
  *   | { Edit: EditBody }
- *   | { PasteText: CommitTextBody }
+ *   | { PasteText: PasteTextBody }
  *   | { Compose: ComposeBody }} InputRequest
  */
 
 /**
  * @typedef {{ restrict: boolean, origins: string[] }} AgentOriginsBody
  * Sets which origins agents' tools may take a page to: when `restrict`, only local addresses and `origins`.
+ */
+
+/**
+ * @typedef {{ block_trackers: boolean, save_passwords: boolean }} PrivacyBody
+ * Sets whether ads and trackers are blocked and whether logins are offered to be kept and filled in.
  */
 
 /**
@@ -270,7 +308,8 @@
  *   | { OpenHtml: OpenHtmlBody }
  *   | { AdoptPopup: AdoptPopupBody }
  *   | { DropPopup: { popup: number } }
- *   | { RenderHtml: RenderHtmlBody }} Request
+ *   | { RenderHtml: RenderHtmlBody }
+ *   | { Privacy: PrivacyBody }} Request
  */
 
 /**
@@ -293,7 +332,7 @@
  * What the helper reports to the window.
  * @typedef {'Ready'
  *   | { Surface: { page: number, width: number, height: number, paths: [string, string] } }
- *   | { Painted: { page: number, buffer: number, generation: number } }
+ *   | { Painted: { page: number, buffer: number, generation: number, dirty?: [number, number, number, number] } }
  *   | { Picked: { page: number, element: PickedElement | null } }
  *   | { ToolDone: { page: number, result: ToolResult } }
  *   | { Title: { page: number, title: string } }

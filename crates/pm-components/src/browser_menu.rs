@@ -1,4 +1,4 @@
-//! The menu that opens over a page of the browser: going back and forward, loading it again with or without the cache, cutting, copying and pasting, marking everything, finding in the page, zooming, opening it in the system's browser, clearing cookies and site data, showing the developer tools, and adding screenshots of the page or its console to the prompt.
+//! The menu that opens over a page of the browser: going back and forward, loading it again with or without the cache, cutting, copying and pasting, marking everything, finding in the page, saving it, zooming, opening it in the system's browser, clearing cookies and site data, showing the developer tools, and adding screenshots of the page or its console to the prompt.
 
 use crate::Menu;
 use crate::areas::MenuEvent;
@@ -68,6 +68,8 @@ pub enum BrowserCommand {
     Print,
     /// Puts the spelling checker's suggestion at this place in place of the misspelt word.
     Suggestion(u8),
+    /// Saves the page, with the pictures and styles it shows, into the Downloads folder.
+    SavePage,
 }
 
 impl BrowserCommand {
@@ -118,6 +120,7 @@ impl BrowserCommand {
             Self::SaveImage => "Save Image As...",
             Self::Print => "Print...",
             Self::Suggestion(_) => "Suggestion",
+            Self::SavePage => "Save Page As...",
         }
     }
 
@@ -131,6 +134,7 @@ impl BrowserCommand {
             Self::ZoomOut => Some("Ctrl+-"),
             Self::ZoomReset => Some("Ctrl+0"),
             Self::Print => Some("Ctrl+P"),
+            Self::SavePage => Some("Ctrl+S"),
             Self::Inspect => Some("F12"),
             Self::Back => Some("Alt+Left"),
             Self::Forward => Some("Alt+Right"),
@@ -211,6 +215,9 @@ impl WorkspaceState {
             BrowserCommand::Console => browser.commands.push(Command::Console),
             BrowserCommand::Area => browser.start_area(),
             BrowserCommand::Print => browser.commands.push(Command::Chrome(ChromeAction::Print)),
+            BrowserCommand::SavePage => browser
+                .commands
+                .push(Command::Chrome(ChromeAction::SavePage)),
             BrowserCommand::OpenLinkInNewTab
             | BrowserCommand::CopyLink
             | BrowserCommand::SaveLink
@@ -295,7 +302,7 @@ pub fn browser_menu(open: BrowserMenu, context: Option<&PageMenu>) {
     }
 }
 
-/// `menu` holding the rows of the menu over a page for what `context` says was under the pointer: what can be done with a link, a picture, a misspelt word or what is marked, then moving through the history, printing, inspecting and adding the page to the prompt.
+/// `menu` holding the rows of the menu over a page for what `context` says was under the pointer: what can be done with a link, a picture, a misspelt word or what is marked, then moving through the history, saving, printing, inspecting and adding the page to the prompt.
 fn page_menu_rows(context: &PageMenu, menu: Menu) -> Menu {
     let row = |menu: Menu, command: BrowserCommand, on: bool| {
         menu.item(command.label(), command.keys(), command.id(), !on)
@@ -351,7 +358,12 @@ fn page_menu_rows(context: &PageMenu, menu: Menu) -> Menu {
         (Forward, context.can_forward),
         (Reload, true),
     ]);
-    groups.push(vec![(Find, true), (Print, true), (OpenExternal, true)]);
+    groups.push(vec![
+        (Find, true),
+        (SavePage, true),
+        (Print, true),
+        (OpenExternal, true),
+    ]);
     groups.push(vec![(Inspect, true)]);
     groups.push(
         BrowserCommand::CAPTURES
@@ -408,7 +420,7 @@ fn browser_menu_rows(open: BrowserMenu, menu: Menu) -> Menu {
         &[Cut, Copy, Paste, SelectAll],
         &[Find],
         &[ZoomIn, ZoomOut, ZoomReset],
-        &[Print, OpenExternal, ClearData],
+        &[SavePage, Print, OpenExternal, ClearData],
         &[Inspect],
         &BrowserCommand::CAPTURES,
     ];

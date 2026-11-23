@@ -79,6 +79,8 @@ fn a_saved_browser_goes_to_its_session() {
         host: None,
         agent: false,
         locked: false,
+        title: String::new(),
+        pinned: false,
     }];
     state.restore_session_browser(1, &tabs, 0, false, 0.0);
     assert!(state.browser.is_none());

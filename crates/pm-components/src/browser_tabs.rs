@@ -32,6 +32,9 @@ const TAB_WIDTH: f32 = 168.0;
 /// How narrow a tab is made before the strip scrolls instead, in logical pixels.
 const TAB_LEAST: f32 = 84.0;
 
+/// How wide a pinned tab is, which shows its glyph alone, in logical pixels.
+pub const PINNED_WIDTH: f32 = 36.0;
+
 /// How much room the buttons at the ends of the strip take, in logical pixels.
 const STRIP_BUTTONS: f32 = 30.0;
 
@@ -42,12 +45,13 @@ const STRIP_PADDING: f32 = 16.0;
 const TAB_GAP: f32 = 4.0;
 
 /// What a tool of an agent that reads a page, and so is allowed on a locked tab, is called.
-const READS: [&str; 5] = [
+const READS: [&str; 6] = [
     "browser_snapshot",
     "browser_screenshot",
     "browser_console",
     "browser_get_bounding_box",
     "browser_wait",
+    "browser_record",
 ];
 
 /// Whether the tool `tool` may change a page: every tool does except the ones that only read it, and a tool nobody classified counts as changing it, so a new tool is kept out of a locked tab until it is listed.
@@ -113,6 +117,10 @@ pub struct BrowserTab {
     pub life: crate::browser_life::PageLife,
     /// What the pane shows around the page from what it reported: a dialog, the menu of a right click, full screen, sound, the link under the pointer and tooltips.
     pub chrome: crate::browser_chrome::PageChrome,
+    /// Whether the tab is pinned: drawn compact at the start of the strip, before every tab that is not, and kept so across a restart.
+    pub pinned: bool,
+    /// Whether the tab is private: its page lives in a profile kept in memory only, which the helper empties when the last private tab closes, nothing it visits or zooms is remembered, and the tab is not kept across a restart.
+    pub private: bool,
 }
 
 /// How many closed tabs are kept for opening again.
@@ -140,6 +148,8 @@ impl BrowserTab {
             sealed: None,
             life: crate::browser_life::PageLife::default(),
             chrome: crate::browser_chrome::PageChrome::default(),
+            pinned: false,
+            private: false,
         }
     }
 
@@ -151,7 +161,9 @@ impl BrowserTab {
         }
         let address = self.address.text();
         let address = address.trim();
-        if address.is_empty() || address == "about:blank" {
+        if (address.is_empty() || address == "about:blank") && self.private {
+            "New private tab".to_owned()
+        } else if address.is_empty() || address == "about:blank" {
             "New tab".to_owned()
         } else {
             address.to_owned()
@@ -170,6 +182,10 @@ pub struct SavedTab {
     pub agent: bool,
     /// Whether it was locked against agents.
     pub locked: bool,
+    /// The title its page had, shown in the strip until the page reports its own.
+    pub title: String,
+    /// Whether it was pinned.
+    pub pinned: bool,
 }
 
 /// What an agent is told of a tab.
@@ -242,14 +258,47 @@ impl Browser {
         self.follow_tools();
     }
 
-    /// Scrolls the strip, when it does not draw every tab, so that the tab being shown is drawn.
+    /// Scrolls the strip, when it does not draw every tab, so that the tab being shown is drawn; a pinned tab is always drawn.
     fn show_in_strip(&mut self) {
         let fit = self.strip_fit.get();
+        let pinned = self.pinned_count();
+        if self.active < pinned {
+            return;
+        }
         if self.active < self.strip_start {
             self.strip_start = self.active;
-        } else if fit != usize::MAX && self.active >= self.strip_start + fit {
+        } else if fit != usize::MAX && self.active >= self.strip_start.max(pinned) + fit {
             self.strip_start = self.active + 1 - fit;
         }
+    }
+
+    /// How many tabs are pinned, which are the first of the strip.
+    pub fn pinned_count(&self) -> usize {
+        self.tabs.iter().take_while(|tab| tab.pinned).count()
+    }
+
+    /// Pins the tab at `index` after the pinned tabs at the start of the strip, or unpins it and puts it right after them; the tab shown stays shown.
+    pub fn toggle_pin(&mut self, index: usize) {
+        if index >= self.tabs.len() {
+            return;
+        }
+        let shown = self.active_id();
+        let mut tab = self.tabs.remove(index);
+        tab.pinned = !tab.pinned;
+        let pinned = self.pinned_count();
+        self.tabs.insert(pinned, tab);
+        self.active = self.tab_index(shown).unwrap_or(0);
+        self.show_in_strip();
+    }
+
+    /// Opens a private tab on `address`, shown, giving its number, or nothing when the browser holds as many tabs as it may.
+    pub fn open_private_tab(&mut self, address: &str, host: Option<String>) -> Option<u32> {
+        let id = self.open_tab(address, host, false, false)?;
+        if let Some(tab) = self.tab_mut(id) {
+            tab.private = true;
+        }
+        self.select(self.tabs.len() - 1);
+        Some(id)
     }
 
     /// Ends the modes of picking in the tab being shown, which cannot go on in a page that is no longer shown.
@@ -298,10 +347,11 @@ impl Browser {
         false
     }
 
-    /// Keeps the address of a tab the reader closed, so it can be opened again; blank, sealed and agents' tabs are not kept, and only the newest few are.
+    /// Keeps the address of a tab the reader closed, so it can be opened again; blank, sealed, private and agents' tabs are not kept, and only the newest few are.
     fn remember_closed(&mut self, tab: &BrowserTab) {
         let address = tab.address.text().trim().to_owned();
-        if tab.agent || tab.sealed.is_some() || address.is_empty() || address == "about:blank" {
+        let blank = address.is_empty() || address == "about:blank";
+        if tab.agent || tab.private || tab.sealed.is_some() || blank {
             return;
         }
         self.closed.push((address, tab.host.clone()));
@@ -328,18 +378,21 @@ impl Browser {
         self.select(next);
     }
 
-    /// The range of tabs the strip draws in `width` logical pixels, and how wide each is: all of them when each can be `TAB_LEAST` wide, and otherwise as many as fit, from the one the strip was scrolled to (showing a tab scrolls the strip to it).
+    /// The range of tabs the strip draws in `width` logical pixels after the pinned tabs, which it always draws `PINNED_WIDTH` wide, and how wide each is: all of them when each can be `TAB_LEAST` wide, and otherwise as many as fit, from the one the strip was scrolled to (showing a tab scrolls the strip to it).
     pub fn strip_window(&self, width: f32) -> (Range<usize>, f32) {
+        let pinned = self.pinned_count();
         let count = self.tabs.len();
+        let loose = count - pinned;
+        let width = width - pinned as f32 * (PINNED_WIDTH + TAB_GAP);
         let room = (width - STRIP_BUTTONS - STRIP_PADDING).max(TAB_LEAST);
-        let each = |room: f32, fit: usize| (room / fit as f32).floor() - TAB_GAP;
-        if count as f32 * (TAB_LEAST + TAB_GAP) <= room {
-            return (0..count, each(room, count).min(TAB_WIDTH));
+        let each = |room: f32, fit: usize| (room / fit.max(1) as f32).floor() - TAB_GAP;
+        if loose as f32 * (TAB_LEAST + TAB_GAP) <= room {
+            return (pinned..count, each(room, loose).min(TAB_WIDTH));
         }
         let room = room - 2.0 * STRIP_BUTTONS;
-        let fit = ((room / (TAB_LEAST + TAB_GAP)).floor().max(1.0) as usize).min(count);
+        let fit = ((room / (TAB_LEAST + TAB_GAP)).floor().max(1.0) as usize).min(loose);
         self.strip_fit.set(fit);
-        let start = self.strip_start.min(count - fit);
+        let start = self.strip_start.max(pinned).min(count - fit);
         (start..start + fit, each(room, fit).min(TAB_WIDTH))
     }
 
@@ -448,10 +501,20 @@ impl WorkspaceState {
                 tab.locked = !tab.locked && !tab.agent;
             }
             Target::Browser(BrowserEvent::BrowserTabsPrevious) => {
-                browser.strip_start = browser.strip_start.saturating_sub(1);
+                let pinned = browser.pinned_count();
+                browser.strip_start = browser
+                    .strip_start
+                    .max(pinned)
+                    .saturating_sub(1)
+                    .max(pinned);
+            }
+            Target::Browser(BrowserEvent::BrowserNewPrivateTab) => {
+                browser.open_private_tab("about:blank", host);
+                self.tab = Tab::Browser;
             }
             Target::Browser(BrowserEvent::BrowserTabsNext) => {
-                browser.strip_start = (browser.strip_start + 1).min(browser.tabs.len() - 1);
+                let next = browser.strip_start.max(browser.pinned_count()) + 1;
+                browser.strip_start = next.min(browser.tabs.len() - 1);
             }
             Target::Browser(BrowserEvent::BrowserTab(index)) if index < count => {
                 browser.select(index);
@@ -470,6 +533,11 @@ impl WorkspaceState {
     /// Opens a new tab and shows it, as the key for it does.
     pub fn browser_new_tab(&mut self) {
         self.browser_tab_pressed(Target::Browser(BrowserEvent::BrowserNewTab));
+    }
+
+    /// Opens a new private tab and shows it, as the key for it does.
+    pub fn browser_new_private_tab(&mut self) {
+        self.browser_tab_pressed(Target::Browser(BrowserEvent::BrowserNewPrivateTab));
     }
 
     /// Closes the tab being shown, as the key for it does.
@@ -491,10 +559,11 @@ fn scroll_button(icon: rustle::Icon, id: BrowserEvent, disabled: bool) {
         .build();
 }
 
-/// Emits the strip of tabs, `width` logical pixels wide: a chip for each tab that fits, buttons to scroll when not all do, and the one that opens a new tab.
+/// Emits the strip of tabs, `width` logical pixels wide: the pinned tabs, compact, then a chip for each other tab that fits, buttons to scroll when not all do, and the one that opens a new tab.
 pub fn tab_strip(browser: &Browser, width: f32) {
     let (shown, each) = browser.strip_window(width);
-    let scrolls = shown.len() < browser.tabs.len();
+    let pinned = browser.pinned_count();
+    let scrolls = shown.len() + pinned < browser.tabs.len();
     rustle::row_arranged(
         Modifier::new()
             .height(TAB_STRIP)
@@ -507,41 +576,18 @@ pub fn tab_strip(browser: &Browser, width: f32) {
         Arrangement::SpacedBy(theme::sp(1)),
         Alignment::Center,
         || {
+            for index in 0..pinned {
+                strip_chip(browser, index, PINNED_WIDTH);
+            }
             if scrolls {
                 scroll_button(
                     phosphor::ARROW_LEFT,
                     BrowserEvent::BrowserTabsPrevious,
-                    shown.start == 0,
+                    shown.start <= pinned,
                 );
             }
             for index in shown.clone() {
-                let tab = &browser.tabs[index];
-                let hint = if tab.agent {
-                    format!("{} (opened by an agent)", tab.label())
-                } else {
-                    tab.label()
-                };
-                rustle::key(tab.id, || {
-                    TabChip::new(
-                        tab.label(),
-                        Target::Browser(BrowserEvent::BrowserTab(index)),
-                        Target::Browser(BrowserEvent::BrowserTabClose(index)),
-                    )
-                    .variant(if tab.agent {
-                        TabVariant::Agent
-                    } else {
-                        TabVariant::Page
-                    })
-                    .selected(index == browser.active)
-                    .locked(tab.locked)
-                    .audio((tab.chrome.audible || tab.chrome.muted).then_some((
-                        tab.chrome.muted,
-                        Target::Browser(BrowserEvent::BrowserTabMute(index)),
-                    )))
-                    .width(each)
-                    .hint(hint)
-                    .build();
-                });
+                strip_chip(browser, index, each);
             }
             if scrolls {
                 scroll_button(
@@ -553,6 +599,55 @@ pub fn tab_strip(browser: &Browser, width: f32) {
             Button::icon(phosphor::PLUS, Target::Browser(BrowserEvent::BrowserNewTab)).build();
         },
     );
+}
+
+/// What the pointer resting on the tab `tab` says: its label, with whose it is and what kind it is.
+fn strip_hint(tab: &BrowserTab) -> String {
+    let label = tab.label();
+    match (tab.agent, tab.private, tab.pinned) {
+        (true, _, _) => format!("{label} (opened by an agent)"),
+        (_, true, true) => format!("{label} (private, pinned)"),
+        (_, true, false) => format!("{label} (private)"),
+        (_, false, true) => format!("{label} (pinned)"),
+        _ => label,
+    }
+}
+
+/// Emits the chip of the tab at `index`, `width` logical pixels wide: compact for a pinned tab, marked for a private one or one an agent opened, and opening the menu of the tab on a secondary press.
+#[track_caller]
+fn strip_chip(browser: &Browser, index: usize, width: f32) {
+    let tab = &browser.tabs[index];
+    let operations = crate::events::operations();
+    let on_menu = move |at: (f32, f32)| {
+        operations.update(Box::new(move |state| {
+            state.with_browser_tab_menu(index, at)
+        }));
+    };
+    rustle::key(tab.id, || {
+        TabChip::new(
+            tab.label(),
+            Target::Browser(BrowserEvent::BrowserTab(index)),
+            Target::Browser(BrowserEvent::BrowserTabClose(index)),
+        )
+        .variant(if tab.agent {
+            TabVariant::Agent
+        } else if tab.private {
+            TabVariant::Private
+        } else {
+            TabVariant::Page
+        })
+        .selected(index == browser.active)
+        .locked(tab.locked)
+        .pinned(tab.pinned)
+        .audio((tab.chrome.audible || tab.chrome.muted).then_some((
+            tab.chrome.muted,
+            Target::Browser(BrowserEvent::BrowserTabMute(index)),
+        )))
+        .width(width)
+        .hint(strip_hint(tab))
+        .menu(on_menu)
+        .build();
+    });
 }
 
 #[cfg(test)]

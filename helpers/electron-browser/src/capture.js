@@ -220,7 +220,7 @@ async function run(page, kind) {
     if (!page.cdp || !page.recorder) {
       capture.error = page.sealed ? 'Nothing can be taken from a sealed page.' : 'Nothing can be taken from developer tools.';
     } else if (kind === 'Console') {
-      capture.lines = page.recorder.console.slice(-MOST_LINES).map((text) => line(text, LONGEST_LINE));
+      capture.lines = page.recorder.console.slice(-MOST_LINES).map((entry) => line(`[${entry.level}] ${entry.text}${entry.source ? ` (${entry.source})` : ''}`, LONGEST_LINE));
     } else if (kind === 'Screenshot') {
       if (!(await add(page, capture, 'Visible', null, false))) capture.error = capture.note || 'No picture could be taken.';
     } else if (kind === 'FullPage') {

@@ -3,13 +3,17 @@
 /**
  * What a page reports beyond painting, for the pane to draw around it, and what the reader does with it from there:
  * the menu of a right click, full screen, sound, the address of the link under the pointer, tooltips, prompts,
- * printing and the zoom of a site. Every report is a `Chrome` event holding a `PageReport` of
+ * printing, saving the page, reader view, files dropped on it and the zoom of a site. Every report is a `Chrome` event holding a `PageReport` of
  * `crates/pm-browser/src/chrome.rs`; every action a `Chrome` request holding a `PageAction`.
  */
 
 const { app, ipcMain, shell } = require('electron');
 const fs = require('fs');
 const safety = require('./safety');
+const blocker = require('./blocker');
+const passwords = require('./passwords');
+const reader = require('./reader');
+const { dropFiles } = require('./drop');
 const { offsetOf } = require('./frames');
 const { toWindow } = require('./input');
 
@@ -54,8 +58,8 @@ function watch(page) {
     const history = contents.navigationHistory;
     report(page, {
       ContextMenu: {
-        x: Math.round(params.x / page.paneScale),
-        y: Math.round(params.y / page.paneScale),
+        x: Math.round(params.x / page.inputScale()),
+        y: Math.round(params.y / page.inputScale()),
         link_url: String(params.linkURL || ''),
         src_url: String(params.srcURL || ''),
         is_image: params.mediaType === 'image',
@@ -81,6 +85,7 @@ function watch(page) {
   contents.on('did-start-navigation', (details) => {
     if (details.isMainFrame && !details.isSameDocument) report(page, { Tooltip: { text: '', x: 0, y: 0 } });
   });
+  if (!page.sealed) reader.watch(page, (made) => report(page, made));
 }
 
 /**
@@ -117,6 +122,14 @@ function act(page, action) {
     print(page).catch(() => {});
     return;
   }
+  if (action === 'SavePage') {
+    safety.savePage(page).catch(() => {});
+    return;
+  }
+  if (action === 'ReadArticle') {
+    reader.read(page, (made) => report(page, made)).catch(() => {});
+    return;
+  }
   if (!action || typeof action !== 'object') return;
   if (action.AnswerDialog) {
     const { id, accept, text } = action.AnswerDialog;
@@ -124,10 +137,10 @@ function act(page, action) {
   } else if (action.ReplaceMisspelling) {
     contents.replaceMisspelling(String(action.ReplaceMisspelling.word || ''));
   } else if (action.InspectAt) {
-    const at = toWindow(Number(action.InspectAt.x), Number(action.InspectAt.y), page.paneScale);
+    const at = toWindow(Number(action.InspectAt.x), Number(action.InspectAt.y), page.inputScale());
     contents.inspectElement(at.x, at.y);
   } else if (action.CopyImageAt) {
-    const at = toWindow(Number(action.CopyImageAt.x), Number(action.CopyImageAt.y), page.paneScale);
+    const at = toWindow(Number(action.CopyImageAt.x), Number(action.CopyImageAt.y), page.inputScale());
     contents.copyImageAt(at.x, at.y);
   } else if (action.Save) {
     const url = String(action.Save.url || '');
@@ -143,6 +156,19 @@ function act(page, action) {
     report(page, { Audio: { audible: contents.isCurrentlyAudible(), muted: contents.isAudioMuted() } });
   } else if (action.ChooseScreen) {
     safety.chooseScreen(Number(action.ChooseScreen.id), action.ChooseScreen.source ?? null);
+  } else if (action.DropFiles) {
+    const { x, y, paths } = action.DropFiles;
+    dropFiles(page, Number(x), Number(y), paths).catch(() => {});
+  } else if (action.AnswerPassword) {
+    const { id, save, never } = action.AnswerPassword;
+    passwords.answer(Number(id), save === true, never === true).catch(() => {});
+  } else if (action.PrimaryPassword) {
+    const typed = action.PrimaryPassword.password;
+    passwords.primaryPassword(page, typeof typed === 'string' ? typed : null).catch(() => {});
+  } else if (action.FillLogin) {
+    passwords.fill(page, String(action.FillLogin.username ?? '')).catch(() => {});
+  } else if (action.SiteBlocking) {
+    blocker.setSite(page, action.SiteBlocking.on === true);
   } else if (action.SetZoom) {
     const factor = Number(action.SetZoom.factor);
     if (Number.isFinite(factor) && factor >= 0.25 && factor <= 5) {

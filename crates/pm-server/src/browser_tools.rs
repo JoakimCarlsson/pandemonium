@@ -264,22 +264,35 @@ fn definitions() -> Vec<Value> {
         ),
         tool(
             "browser_console",
-            "The messages and errors the page wrote to its console since it was opened (the latest 200 are kept), one per line as `[level] text`. `level` keeps only some levels (`error`, `warning`, `info`, `log`, `debug`; several separated by commas). `clear` true forgets every message after this answer.",
+            "The messages and errors the page wrote to its console since it was opened (the latest 200 are kept), oldest first, one per entry as `#number time [level] text (source)`: the number counts up for the page, the time is UTC with milliseconds, and the source is the script's `address:line:column` when known. Uncaught exceptions are `[error] Uncaught ...` with their call stack on the indented lines below; console.error, console.assert and console.trace carry their stack too. `level` keeps only some levels (`error`, `warning`, `info`, `log`, `debug`; several separated by commas). Every answer ends with `[cursor: N]`; pass `since: N` next time to get only the entries written after this answer, to poll without reading old ones again. `clear` true forgets every message after this answer.",
             &json!({
                 "level": { "type": "string", "description": "Levels to show: some of error, warning, info, log, debug, separated by commas." },
+                "since": { "type": "integer", "minimum": 0, "description": "Only entries numbered above this: the cursor an earlier answer ended with." },
                 "clear": { "type": "boolean", "description": "Forget all recorded messages after returning the matching ones." },
             }),
             &[],
         ),
         tool(
             "browser_network",
-            "The requests the page made since it was opened (the latest 200 are kept), one per line as `#number METHOD url -> status`. `filter` keeps requests whose address contains the text, whose method is it, whose status is it, or whose status class it names (`4xx`; `failed` for failures). `clear` true forgets every recorded request after this answer. `request` gives one request in full by its number: type, size on the wire, timing, request and response headers (Authorization, Cookie and Set-Cookie values are redacted) and, for text types such as HTML, JSON and scripts, the response body cut to 8000 characters. Limits: headers are those the engine reports before it adds its own (cookies it attaches are not shown); the body is only there while the engine still holds it, so it can be missing after navigation or for big responses.",
+            "The requests the page made since it was opened (the latest 200 are kept), one per line as `#number METHOD url -> status (type)`. `filter` keeps requests whose address contains the text, whose method is it, whose status is it, or whose status class it names (`4xx`; `failed` for failures); `type` keeps resource types (`document`, `stylesheet`, `image`, `media`, `font`, `script`, `xhr`, `fetch`, `websocket`, `eventsource`, `manifest`, `ping`, `preflight`, `other`; several separated by commas). `clear` true forgets every recorded request after this answer. `request` gives one request in full by its number: type, size on the wire, timing, request and response headers (Authorization, Cookie and Set-Cookie values are redacted), the request body (cut to 4000 characters) and, for text types such as HTML, JSON and scripts, the response body cut to 8000 characters. Response bodies of text types are read when the request finishes, so they stay available after navigation; the oldest are dropped once the kept bodies pass about a million characters. `wait_for` waits until a request whose address matches finishes (text the address contains, or a pattern over the whole address where `*` is any run of characters, such as `*/api/items*`) and gives it in full: a matching request that finished since the previous tool call started counts, so a click followed by wait_for does not miss a fast response; `type` narrows it and `timeout_ms` (default 10000, at most 60000) bounds the wait. Limits: headers are those the engine reports before it adds its own (cookies it attaches are not shown).",
             &json!({
                 "filter": { "type": "string", "description": "Part of the address, a method, a status such as 404, a class such as 4xx, or failed." },
+                "type": { "type": "string", "description": "Resource types to keep, such as xhr,fetch or document, separated by commas." },
                 "clear": { "type": "boolean", "description": "Forget all recorded requests after returning the matching ones." },
-                "request": { "type": "integer", "description": "The number of one request from the list, to see its headers, size, timing and body." },
+                "request": { "type": "integer", "description": "The number of one request from the list, to see its headers, size, timing and bodies." },
+                "wait_for": { "type": "string", "description": "Wait for a request whose address contains this, or matches it with * as a wildcard, to finish, and show it in full." },
+                "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 60000, "description": "For wait_for: how long to wait, 10000 by default." },
             }),
             &[],
+        ),
+        tool(
+            "browser_record",
+            "Record what you do with the browser so it can be reviewed: `start` begins a recording of your session, after which every browser tool call your session makes on any tab (except browser_record itself) is kept as a step with its arguments, the start of its answer, the page's address and a screenshot taken after it; other sessions keep recordings of their own. `stop` ends it and gives back a numbered summary of the steps. The files go in `folder` (an absolute path on the machine running the window) or else in a new folder named by the time and your session under the browser's data folder: summary.md, steps.json and one PNG per step. The reader sees the steps with thumbnails in the browser pane while you work. `status` says whether your recording is under way. Text typed into password and one-time-code fields and arguments named like passwords, tokens or secrets are kept as [redacted], and password fields are blurred in the screenshots.",
+            &json!({
+                "action": { "type": "string", "enum": ["start", "stop", "status"], "description": "What to do; status when omitted." },
+                "folder": { "type": "string", "description": "For start: the absolute path of the folder to record into." },
+            }),
+            &["action"],
         ),
         tool(
             "browser_wait",
@@ -452,7 +465,7 @@ mod tests {
         assert_eq!(tail, ["browser_cdp", "browser_emulate", "browser_tabs"]);
     }
 
-    /// The network and console tools take the new options.
+    /// The network, console and recording tools take their options.
     #[test]
     fn network_and_console_take_options() {
         let all = definitions();
@@ -460,11 +473,21 @@ mod tests {
             let tool = all.iter().find(|tool| tool["name"] == name).unwrap();
             tool["inputSchema"]["properties"].clone()
         };
-        for option in ["filter", "clear", "request"] {
+        for option in [
+            "filter",
+            "type",
+            "clear",
+            "request",
+            "wait_for",
+            "timeout_ms",
+        ] {
             assert!(properties("browser_network").get(option).is_some());
         }
-        for option in ["level", "clear"] {
+        for option in ["level", "since", "clear"] {
             assert!(properties("browser_console").get(option).is_some());
+        }
+        for option in ["action", "folder"] {
+            assert!(properties("browser_record").get(option).is_some());
         }
     }
 

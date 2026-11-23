@@ -7,8 +7,9 @@
 //!
 //! The four bytes after the counter say how the pixels are laid out: `BGRA`
 //! when the writer stores them as the engine paints them, so it does no work
-//! per pixel, and anything else for RGBA. The reader turns BGRA into RGBA
-//! while copying, into a buffer it is handed and can reuse.
+//! per pixel, and anything else for RGBA. The reader copies them as they are,
+//! whole or only a rectangle, into a buffer it is handed and can reuse, and
+//! says which layout they have; the renderer takes either without reordering.
 
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -16,6 +17,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering, fence};
 
 use memmap2::{Mmap, MmapMut};
+
+use crate::frame::Region;
 
 /// How many bytes of a file come before the pixels.
 const HEADER: usize = 16;
@@ -36,13 +39,6 @@ fn counter(base: *const u8) -> &'static AtomicU64 {
     // SAFETY: the mapping is page-aligned and at least HEADER bytes long, and lives as long as the
     // reference is used, which callers keep within one call.
     unsafe { &*base.cast::<AtomicU64>() }
-}
-
-/// Swaps the blue and red bytes of every pixel of `pixels`, turning BGRA into RGBA and back.
-fn swap_red_blue(pixels: &mut [u8]) {
-    for pixel in pixels.as_chunks_mut::<4>().0 {
-        pixel.swap(0, 2);
-    }
 }
 
 /// A file the helper paints into.
@@ -91,6 +87,8 @@ pub struct SurfaceReader {
     map: Mmap,
     /// How many bytes of pixels it holds.
     pixels: usize,
+    /// The width and height of a picture in it.
+    size: (u32, u32),
 }
 
 impl SurfaceReader {
@@ -106,7 +104,11 @@ impl SurfaceReader {
                 "surface too small",
             ));
         }
-        Ok(Self { map, pixels })
+        Ok(Self {
+            map,
+            pixels,
+            size: (width, height),
+        })
     }
 
     /// How many bytes of pixels a picture in the file takes, which is how long a buffer for [`SurfaceReader::read_into`] must be.
@@ -119,21 +121,28 @@ impl SurfaceReader {
         self.pixels == 0
     }
 
-    /// Whether the writer stores the pixels as BGRA.
-    fn bgra(&self) -> bool {
+    /// Whether the writer stores the pixels as BGRA rather than RGBA.
+    pub fn bgra(&self) -> bool {
         self.map[FORMAT_AT..FORMAT_AT + BGRA.len()] == BGRA
     }
 
-    /// The pixels as RGBA, or nothing when the file was never filled or the writer was filling it while they were copied.
+    /// The pixels as they are stored (see [`SurfaceReader::bgra`]), or nothing when the file was never filled or the writer was filling it while they were copied.
     pub fn read(&self) -> Option<Vec<u8>> {
         let mut copy = vec![0; self.pixels];
         self.read_into(&mut copy).then_some(copy)
     }
 
-    /// Copies the pixels as RGBA into `out`, which must be [`SurfaceReader::len`] bytes long, and says whether they
-    /// are a whole picture; on `false`, which also comes of a file never filled or an `out` of another length, what
-    /// `out` holds is to be thrown away.
+    /// Copies the pixels as they are stored into `out`, which must be [`SurfaceReader::len`] bytes long, and says
+    /// whether they are a whole picture; on `false`, which also comes of a file never filled or an `out` of another
+    /// length, what `out` holds is to be thrown away.
     pub fn read_into(&self, out: &mut [u8]) -> bool {
+        self.read_region_into(out, Region::whole(self.size.0, self.size.1))
+    }
+
+    /// Copies only the pixels inside `region` into the same place of `out`, which must be [`SurfaceReader::len`]
+    /// bytes long and already hold the rest of the picture, and says whether `out` then holds a whole picture, as
+    /// [`SurfaceReader::read_into`] does. A region reaching past the picture is cut to it.
+    pub fn read_region_into(&self, out: &mut [u8], region: Region) -> bool {
         if out.len() != self.pixels {
             return false;
         }
@@ -142,23 +151,30 @@ impl SurfaceReader {
         if before == 0 || before % 2 == 1 {
             return false;
         }
-        // SAFETY: both ranges are inside their allocations; a concurrent write is detected below
-        // and the copy thrown away.
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                self.map.as_ptr().add(HEADER),
-                out.as_mut_ptr(),
-                self.pixels,
-            );
+        let (width, height) = self.size;
+        let region = Region::reported(
+            [region.x, region.y, region.width, region.height],
+            width,
+            height,
+        );
+        let stride = width as usize * 4;
+        let span = region.width as usize * 4;
+        let first = region.x as usize * 4;
+        let base = self.map.as_ptr();
+        for row in region.y as usize..(region.y + region.height) as usize {
+            let at = row * stride + first;
+            // SAFETY: the row's span lies inside both the picture in the map and `out`, which are `pixels` bytes
+            // long; a concurrent write is detected below and the copy thrown away.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    base.add(HEADER + at),
+                    out.as_mut_ptr().add(at),
+                    span,
+                );
+            }
         }
         fence(Ordering::Acquire);
-        if sequence.load(Ordering::Relaxed) != before {
-            return false;
-        }
-        if self.bgra() {
-            swap_red_blue(out);
-        }
-        true
+        sequence.load(Ordering::Relaxed) == before
     }
 }
 
@@ -176,9 +192,9 @@ mod tests {
         folder
     }
 
-    /// A file written as BGRA reads back as RGBA, and an unfilled one reads as nothing.
+    /// A file written as BGRA reads back as it was written and says so, and an unfilled one reads as nothing.
     #[test]
-    fn bgra_reads_back_as_rgba() {
+    fn bgra_reads_back_as_written() {
         let folder = scratch("bgra");
         let path = folder.join("page.rgba");
         let mut writer = SurfaceWriter::create(&path, 2, 1).expect("create");
@@ -187,7 +203,8 @@ mod tests {
         assert!(!reader.read_into(&mut out));
         writer.write(&[1, 2, 3, 4, 5, 6, 7, 8]);
         assert!(reader.read_into(&mut out));
-        assert_eq!(out, [3, 2, 1, 4, 7, 6, 5, 8]);
+        assert!(reader.bgra());
+        assert_eq!(out, [1, 2, 3, 4, 5, 6, 7, 8]);
         assert!(!reader.read_into(&mut [0; 4]));
         let _ = std::fs::remove_dir_all(folder);
     }
@@ -202,7 +219,75 @@ mod tests {
         bytes[HEADER..].copy_from_slice(&[9, 8, 7, 6]);
         std::fs::write(&path, bytes).expect("write");
         let reader = SurfaceReader::open(&path, 1, 1).expect("open");
+        assert!(!reader.bgra());
         assert_eq!(reader.read(), Some(vec![9, 8, 7, 6]));
+        let _ = std::fs::remove_dir_all(folder);
+    }
+
+    /// A region copies only its own pixels and leaves the rest of the buffer as it was.
+    #[test]
+    fn a_region_copies_only_its_pixels() {
+        let folder = scratch("region");
+        let path = folder.join("page.rgba");
+        let mut writer = SurfaceWriter::create(&path, 3, 2).expect("create");
+        let reader = SurfaceReader::open(&path, 3, 2).expect("open");
+        writer.write(&(1..=24).collect::<Vec<u8>>());
+        let mut out = vec![0; reader.len()];
+        let corner = Region {
+            x: 1,
+            y: 1,
+            width: 9,
+            height: 9,
+        };
+        assert!(reader.read_region_into(&mut out, corner));
+        let expected: Vec<u8> = (1..=24)
+            .map(|byte| if byte > 16 { byte } else { 0 })
+            .collect();
+        assert_eq!(out, expected);
+        let _ = std::fs::remove_dir_all(folder);
+    }
+
+    /// The time copying a picture out of a file takes, whole and swapped to RGBA as the window once did, whole as it
+    /// is stored, and only a caret's rectangle. Run with
+    /// `cargo test -p pm-browser --release -- --ignored --nocapture surface_read_cost`.
+    #[test]
+    #[ignore = "a measurement, not a check"]
+    fn surface_read_cost() {
+        let folder = scratch("cost");
+        for (name, width, height) in [("1080p", 1920u32, 1080u32), ("4K", 3840, 2160)] {
+            let path = folder.join(format!("{name}.rgba"));
+            let mut writer = SurfaceWriter::create(&path, width, height).expect("create");
+            let reader = SurfaceReader::open(&path, width, height).expect("open");
+            writer.write(&vec![7; reader.len()]);
+            let mut out = vec![0; reader.len()];
+            let mut time = |read: &mut dyn FnMut(&mut [u8])| {
+                read(&mut out);
+                let started = std::time::Instant::now();
+                for _ in 0..30 {
+                    read(&mut out);
+                }
+                started.elapsed().as_secs_f64() * 1000.0 / 30.0
+            };
+            let swapped = time(&mut |out| {
+                assert!(reader.read_into(out));
+                for pixel in out.as_chunks_mut::<4>().0 {
+                    pixel.swap(0, 2);
+                }
+            });
+            let whole = time(&mut |out| assert!(reader.read_into(out)));
+            let caret = time(&mut |out| {
+                let caret = Region {
+                    x: 400,
+                    y: 300,
+                    width: 2,
+                    height: 40,
+                };
+                assert!(reader.read_region_into(out, caret));
+            });
+            println!(
+                "{name}: whole and swapped {swapped:.3} ms, whole {whole:.3} ms, caret {caret:.4} ms"
+            );
+        }
         let _ = std::fs::remove_dir_all(folder);
     }
 }

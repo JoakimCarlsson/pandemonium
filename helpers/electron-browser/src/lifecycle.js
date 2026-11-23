@@ -26,6 +26,7 @@ const HOLD_FOR = 30_000;
  * @property {Send} send Tells the window what the page reports.
  * @property {import('electron').BrowserWindow} win The offscreen window that holds the page.
  * @property {import('electron').WebContents} contents What the window shows.
+ * @property {boolean} [closedByWindow] Whether the window asked for the page to close, so it need not be told.
  */
 
 /**
@@ -50,7 +51,7 @@ function reportHistory(page) {
 
 /**
  * Listens to a page for its loading, its failures, its content process and its history, and tells the window, and
- * for the page closing itself.
+ * for the page closing itself. A window the page has moved out of (`Page#rebuild`) tells nothing of its crash or close.
  * @param {Watched} page The page.
  * @returns {void}
  */
@@ -84,21 +85,25 @@ function watch(page) {
     if (isMainFrame && shownFailure(code)) send({ LoadFailed: { page: id, url, code, name } });
   });
   contents.on('render-process-gone', (_event, details) => {
-    if (details.reason !== 'clean-exit') send({ Crashed: { page: id, reason: details.reason } });
+    if (details.reason !== 'clean-exit' && page.contents === contents) send({ Crashed: { page: id, reason: details.reason } });
   });
   contents.on('unresponsive', () => send({ Responsive: { page: id, responsive: false } }));
   contents.on('responsive', () => send({ Responsive: { page: id, responsive: true } }));
-  win.on('close', () => send({ PageClosed: { page: id } }));
+  win.once('closed', () => {
+    if (!page.closedByWindow && page.win === win) send({ PageClosed: { page: id } });
+  });
 }
 
 /**
  * The options of the offscreen window Electron makes for a page that opened one with `window.open`: hidden, painted
- * offscreen at the engine's scale, as every page is, and as confined as every other page. The page that takes it
+ * offscreen at the engine's scale, as every page is, as confined as every other page, and in the opener's profile, so
+ * that a sign-in it starts sees the opener's cookies and a private page's window stays private. The page that takes it
  * sizes it in device pixels and renders it at its pane's scale.
  * @param {number} scale The device scale the engine paints the window at, `ENGINE_SCALE` of `surface.js`.
+ * @param {import('electron').Session} [pages] The opener's profile; the shared one when not given.
  * @returns {import('electron').BrowserWindowConstructorOptions} The options.
  */
-function popupOptions(scale) {
+function popupOptions(scale, pages) {
   return {
     show: false,
     useContentSize: true,
@@ -110,6 +115,7 @@ function popupOptions(scale) {
       preload: path.join(__dirname, 'popups-preload.js'),
       nodeIntegrationInSubFrames: true,
       backgroundThrottling: false,
+      ...(pages ? { session: pages } : {}),
     },
   };
 }

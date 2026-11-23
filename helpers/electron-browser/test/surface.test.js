@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { test } = require('node:test');
-const { Surface, dirtyRows, joinRows } = require('../src/surface');
+const { Surface, dirtyRows, dirtyRect, joinRows } = require('../src/surface');
 
 /** The ignored folder the tests write their files under. */
 const SCRATCH = path.join(__dirname, '..', '..', '..', 'build', 'helper-tests');
@@ -54,6 +54,13 @@ test('dirty rows cover the rectangle in logical or device pixels', () => {
   assert.deepEqual(joinRows({ top: 1, bottom: 2 }, { top: 3, bottom: 4 }), { top: 1, bottom: 4 });
 });
 
+test('the dirty rectangle the window is told covers the paint in device pixels', () => {
+  assert.deepEqual(dirtyRect(undefined, 2, 200, 100), [0, 0, 200, 100]);
+  assert.deepEqual(dirtyRect({ x: 3, y: 10, width: 5, height: 5 }, 1, 200, 100), [3, 10, 5, 5]);
+  assert.deepEqual(dirtyRect({ x: 3, y: 10, width: 5, height: 5 }, 2, 200, 100), [3, 10, 13, 20]);
+  assert.deepEqual(dirtyRect({ x: 190, y: 90, width: 50, height: 50 }, 2, 200, 100), [190, 90, 10, 10]);
+});
+
 test('a file gets the rows dirty since it was last written, joined over both paints', () => {
   const dir = folder();
   /** @type {[string, string][]} */
@@ -64,6 +71,7 @@ test('a file gets the rows dirty since it was last written, joined over both pai
   surface.write(/** @type {any} */ (frames[1]));
   const third = surface.write(/** @type {any} */ (frames[2]), { x: 0, y: 2, width: 4, height: 1 });
   const fourth = surface.write(/** @type {any} */ (frames[3]), { x: 0, y: 5, width: 4, height: 2 });
+  assert.deepEqual(/** @type {any} */ (fourth).dirty, [0, 5, 4, 2]);
   const paths = announced[0];
   const bitmap2 = frames[2].toBitmap();
   const bitmap3 = frames[3].toBitmap();

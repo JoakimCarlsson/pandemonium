@@ -38,13 +38,26 @@ report says which is newest.
 
 The four bytes after the counter are `BGRA` when the pixels are stored as the
 engine paints them; the helper writes them so and does no work per pixel, and
-the window swaps red and blue while it copies (`SurfaceReader::read_into` in
-`crates/pm-browser/src/surface.rs`). A file without the tag holds RGBA. The
-helper writes into a file only the rows that changed since that file was last
-written: the paint's dirty rectangle joined with the one of the paint before,
-since the files take turns (`dirtyRows` in `src/surface.js`). The window
-copies into the pixels of the picture before last once the renderer no longer
-holds them, and hands the pixels to the renderer without another copy.
+neither does the window: it hands them to the renderer as BGRA
+(`rustle::PixelFormat::Bgra8`), which keeps them in a BGRA texture. A file
+without the tag holds RGBA and is drawn as such. The helper writes into a file
+only the rows that changed since that file was last written: the paint's dirty
+rectangle joined with the one of the paint before, since the files take turns
+(`dirtyRows` in `src/surface.js`).
+
+Each `Painted` report also carries the paint's dirty rectangle in device
+pixels (`dirty`, left, top, width and height; `dirtyRect` in
+`src/surface.js`), and the window remembers the rectangles of the last 32
+paints (`crates/pm-browser/src/damage.rs`); the first paint into new files
+counts as changing everything, and a report without the field as well. The
+window copies into the pixels of the picture before last once the renderer no
+longer holds them, and copies only the rectangle the paints since that picture
+changed (`SurfaceReader::read_region_into`), or everything when one of those
+paints is not remembered. It hands the pixels to the renderer without another
+copy, with the rectangle that changed since the picture handed out before
+(`Frame::changed`), and the renderer writes only that rectangle into the
+page's texture while the texture still holds that picture
+(`ImageData::changed_since`); otherwise it writes the whole picture.
 
 When the size changes, the helper makes new files and announces them before
 any paint into them. It keeps the old files for two seconds before removing
@@ -69,22 +82,38 @@ window draws the frame cropped to the pane's logical size, so it shows sharp.
 The requests of the window stay in logical pixels.
 
 The engine fixes an offscreen window's device scale when it makes the window and
-has no way to change it later; under Wayland it also ignores any scale but 1.
-So every window paints at 1 (`ENGINE_SCALE` in `src/surface.js`) and is sized
-in device pixels, the pane's logical size times its scale (`Page#fitWindow`),
+has no way to change it later. Under Wayland it ignores any scale but 1 while
+Chromium's `WaylandFractionalScaleV1` feature is on, so the helper turns that
+feature off (`main.js`); the windows are offscreen and never shown, so the
+desktop's fractional scaling of real windows does not matter to them.
+Every window paints at 1 (`ENGINE_SCALE` in `src/surface.js`), except that of a
+mobile viewport (below), and is sized
+in device pixels, the pane's logical size times its scale (`Page#fitWindow`;
+the size is set again once the window exists, since X11 shrinks a new window
+to the screen),
 and the page's zoom carries the scale: the contents' zoom is the pane's scale
-times the reader's zoom (`Page#carryScale`), so the page lays out at the
-logical size and reports and renders at a pixel ratio of the scale. The zoom,
-unlike an emulated pixel ratio, reaches cross-origin frames, which run in
-processes of their own: `Emulation.setDeviceMetricsOverride` changes the top
-frame alone, and a frame's target refuses it, so with it such a frame reports a
-pixel ratio of 1 and is painted blurry. The contents' zoom mode is `isolated`,
-so the zoom stays through navigation and no other page of the site takes it;
-the helper puts it back after a navigation when the engine dropped it, as it
-does for a zoom set before the first document comes up (`Page#holdZoom`). The
-reader's zoom, as `Zoom`, `SetZoom` and `Zoomed` carry it, is the contents'
-zoom over the pane's scale (`Page#readerZoom`); the engine's limit of 500%
-applies to the product, so at scale 2 the reader can zoom to 250%.
+times the reader's zoom (`Page#carryScale`, `rendering` in `src/emulation.js`),
+so the page lays out at the logical size and reports and renders at a pixel
+ratio of the scale. The zoom, unlike an emulated pixel ratio, reaches
+cross-origin frames, which run in processes of their own:
+`Emulation.setDeviceMetricsOverride` changes the top frame alone, and a frame's
+target refuses it ("can only be executed on top-level targets"), so with it
+such a frame reports a pixel ratio of 1 and is painted blurry. The contents'
+zoom mode is `isolated`, so the zoom stays through navigation and no other page
+of the site takes it; the helper puts it back after a navigation when the
+engine dropped it, as it does for a zoom set before the first document comes up
+(`Page#holdZoom`).
+
+The engine holds the contents' zoom to 25%–500%. When the pane's scale times
+the reader's zoom goes past that, as at scale 2 above 250%, the zoom stays at
+the limit and an override that follows the window (width and height 0) carries
+the rest: its `deviceScaleFactor` and its `scale` are both what is left over,
+so the top frame lays out at the window's size over the scale times the
+reader's zoom and reports that times its pixel ratio. Cross-origin frames get
+the zoom alone, so at scale 2 and 500% they lay out right and render at a
+pixel ratio of 5, scaled up by 2. The reader's zoom, as `Zoom`, `SetZoom` and
+`Zoomed` carry it, is the zoom the reader chose (`Page#readerZoom`), through
+the whole range of 25% to 500% at any scale.
 
 The developer tools and sealed pages render at the pane's scale through
 `Emulation.setDeviceMetricsOverride` with width and height 0 (the size follows
@@ -106,14 +135,49 @@ so they are multiplied by the reader's zoom as well (`windowPoint` in
 them in CSS pixels.
 
 An agent's viewport (`browser_resize`, `browser_emulate`) sizes the window to
-the viewport's size times the pane's scale. When it has no pixel ratio of its
-own and is not mobile, the zoom carries the scale as for the pane, and the
-override sets only the screen's size (`screenMetrics` in `src/emulation.js`).
-Otherwise the override follows the window at the viewport's pixel ratio, or
-the pane's, with the pane's scale as its `scale` and the viewport's size as the
-screen's (`viewportMetrics`, `Page#emulateViewport`), and the zoom is the
-reader's alone; cross-origin frames then keep a pixel ratio of 1. An override
-of a fixed size would paint at 1.
+the viewport's size times the pane's scale, and the same split renders it
+(`rendering`, `Page#emulateViewport`): the zoom carries the viewport's pixel
+ratio, or the pane's, times the reader's zoom as far as the engine takes it, and
+the override follows the window with what is left as its `deviceScaleFactor`,
+the layout's share as its `scale` and the viewport's size as the screen's. A
+viewport with a pixel ratio of its own that is not mobile therefore reaches
+cross-origin frames: at scale 2, ratio 3 is a zoom of 3 with an override of
+ratio 1 and `scale` 2/3, and the top frame and its cross-origin frames both
+report 3 and lay out at the viewport's size. Points of the window reach the top
+frame's target in CSS pixels times the override's `scale`, which is the
+window's pixels over the contents' zoom (`Router#inside`, `Page#topUnits`).
+
+A mobile viewport cannot use the zoom: while the engine emulates a phone it
+ignores the zoom in the top frame but still zooms cross-origin frames by it,
+which then lay out too large. Its zoom stays 1 and the override carries its
+pixel ratio times the reader's zoom. Cross-origin frames then render at the
+window's own device scale: a frame's target refuses the override, and
+`enableDeviceEmulation` of Electron reaches the top frame alone. So when an
+agent turns on a mobile viewport whose ratio is not 1, the page moves into a
+new window painted at that ratio (`engineScale` in `src/emulation.js`,
+`Page#rebuild`), and back into one painted at 1 when the viewport stops being
+mobile or is reset. The old window is closed without `PageClosed`, the new one
+is watched as the old one was, and the page's history is handed over
+(`navigationHistory.restore`), which loads its document again: what the
+document held in memory, such as typed text, is lost, as the console and
+network the recorder kept are. A popup an adopted tab shows cannot move, since
+its window belongs to its opener, so its cross-origin frames keep a ratio of 1
+under a mobile viewport.
+
+The moved window is the device size over the ratio, rounded up
+(`Page#windowSize`); what it paints past the device size is cut off
+(`Page#paint`). Its override gives the layout size itself, the viewport's size
+over the reader's zoom, with `dontSetVisibleSize` so the engine keeps the
+window's size, and `scale` the pane's scale times the reader's zoom over the
+window's ratio, which shrinks the layout into it: at scale 2, a 300 by 200
+viewport of ratio 3 is a window of 200 by 134 painted at 3, of which 600 by 400
+is kept, and the top frame and its cross-origin frames both report 3. A
+reader's zoom does not move the page again: the cross-origin frames keep the
+ratio and are scaled up by the zoom. Points
+of the window reach the top frame's target over the window's ratio as well
+(`Page#topUnits`), and Electron's own input events, menus and the points of
+`InspectAt` and `CopyImageAt` are in the window's pixels, the pane's scale over
+that ratio (`Page#inputScale`).
 
 Right after the token the helper sends `Features { features }`, the names of
 what it can do beyond what every helper does, and then `Ready`. The window reads
@@ -123,7 +187,9 @@ as helpers released before a feature existed do, has none of them, and the
 window never sends it a request of a feature it did not announce: such a helper
 would ignore the request and leave the window waiting. Today the one feature is
 `sealed-pages` (`SEALED_PAGES` in `wire.rs`, `src/features.js` in the helper),
-for `OpenHtml` and `RenderHtml`.
+for `OpenHtml` and `RenderHtml`. `partitions` (`PARTITIONS`) says the helper
+opens a page in the profile the `partition` of `Open` names (see
+[Private tabs and profiles](#private-tabs-and-profiles)).
 
 `OpenRequested` reports that a page asked for a new window, so that the window
 opens a tab for it, and `PopupOpened`, `AdoptPopup` and `DropPopup` carry the
@@ -146,9 +212,18 @@ the helper reads what is marked in the frame that holds the keyboard (a text
 field's selection, otherwise the document's selection as text and HTML; never a
 password field), reports it as `Copied`, and for a cut then deletes it; the
 window puts the text on its clipboard. On paste, from the shortcut or the menu,
-the window reads its clipboard's text and sends it as `PasteText`, which replaces
-the selection; with no text on the clipboard it falls back to the engine's own
-paste. The picker and the
+the window reads its clipboard and sends it as `PasteText`, which replaces
+the selection: the text, with the rich text as HTML (`Clipboard::html` in
+rustle) and the files the clipboard holds, or a picture on it saved as a PNG in
+the `pasted` folder of the data directory. Plain text is typed as before. A
+paste with HTML or files is first offered to the frame that holds the keyboard
+as a paste event of its own (`src/paste.js`), its `clipboardData` holding the
+text, the HTML and the files (at most 25 MB of them), so rich editors keep the
+formatting and pages that take pasted pictures, such as issue trackers, get
+them. When the page does not cancel that event, an editable region gets the
+HTML with `document.execCommand('insertHTML')` and a plain field gets the text.
+With nothing on the clipboard the window falls back to the engine's own paste.
+The picker and the
 agent tools use the page's DevTools protocol through Electron's debugger. The
 developer tools are Electron's own, painted into a second page.
 
@@ -168,6 +243,12 @@ key, goes through the page's DevTools protocol (`Input.dispatchKeyEvent`). On
 macOS, Command and Option with the arrows, Backspace and Delete, Shift marking
 what a movement passes over, are sent with the editing command macOS binds to
 them (`macEditing`), since an offscreen page gets no bindings from the system.
+The engine's own key events reach only the top frame, so on a page with
+cross-origin frames every key goes through the protocol as well, with its DOM
+key and code (`protocolKey`), which hands it to the frame that holds the
+keyboard; it waits behind the pointer events sent before it
+(`Router#key`), so a key pressed right after a click reaches the field the
+click focused.
 
 Pointer moves, presses and releases go through the page's DevTools protocol
 (`Input.dispatchMouseEvent`), routed by `src/routing.js`: in an offscreen
@@ -175,9 +256,33 @@ window the engine sends every pointer event to the top frame, so a cross-origin
 frame, which runs in a process of its own, would never see the pointer move,
 show a hover state or a tooltip. The router follows each cross-origin frame as a
 target of its own (`Target.setAutoAttach`), finds the innermost one under the
-pointer (`DOM.getNodeForLocation` and the box of its element) and sends the
-event to that frame's target at the point inside it, in its CSS pixels; the top
-frame takes points in the window's pixels without the zoom. A pressed button
+pointer and sends the event to that frame's target at the point inside it, in
+its CSS pixels; the top frame takes points in the window's pixels without the
+zoom. Finding the frame takes no round trip to the page in the common case: the
+router keeps the box of each cross-origin frame's element in the viewport of
+the target that holds it (`DOM.getFrameOwner` once, then `DOM.getBoxModel`),
+and every target that holds such a frame runs a small script in an isolated
+world (`Page.addScriptToEvaluateOnNewDocument` with a `Runtime.addBinding`
+binding) that reports when its layout may have moved: a scroll, a resize, a
+change to the document, an animation, a load or the pointer entering or
+leaving an element. It reports the first change at once, before the change is
+painted, then at most once an animation frame while changes go on, so an event
+the reader sends after seeing a change finds the boxes stale. A report that
+moves a frame, or `Page.frameResized`, marks that target's boxes stale and has
+them measured again; an event that arrives meanwhile waits for one fresh
+measure, and a box that cannot be measured, or is turned or skewed, is found
+the slow way, with `DOM.getNodeForLocation`. A point outside every
+cross-origin frame's box goes to the target that holds the frames with no
+round trip. A point inside one is decided exactly: the router asks that
+target's script, in its isolated world (`Runtime.evaluate`), what
+`document.elementFromPoint` finds there, one round trip, and only a frame's
+own element sends the event into the frame; anything laid over it, such as a
+menu or a dialog, takes the event, however small. When the pointer comes into
+the frames' boxes from elsewhere, the move also goes to the target that holds
+them, sent beside the question, and the script answers once that move is
+handled, so an element a `:hover` rule shows over the frame takes the pointer
+too. Moves that arrive while one is being decided are coalesced to the newest,
+so a burst costs at most one round trip at a time. A pressed button
 keeps the pointer in the frame it went down in, and moving off a cross-origin
 frame sends it a move just outside it, so it hears the pointer leave. The
 agents' click, hover and drag tools use the same router.
@@ -279,7 +384,25 @@ holds it and reports `PopupOpened` (opener, the helper's number for the window,
 address, and the agent flag as for `OpenRequested`). The window opens a tab for
 it whose first command is `AdoptPopup` instead of a load, and the helper makes
 the held window that tab's page (`adoptPopup` in `main.js`), sending its address,
-title and history as it stands, since it may have loaded already. When the strip
+title and history as it stands, since it may have loaded already.
+Electron gives such a window no offscreen view of its own: it lays out at 0 by
+0 and never paints, however it is sized or shown. The adopted page is therefore
+sized through the DevTools protocol, with a fixed device-metrics override of the
+pane's size in device pixels, and painted from the protocol's screencast, whose
+frames go into the tab's surface like any other paint (`Screencast` in
+`helpers/electron-browser/src/screencast.js`). The screencast's frames come at
+the override's size whatever pixel ratio it emulates, and with a fixed size the
+engine lays out at that size over the zoom and leaves `scale` aside. So the
+override's size is the device size over the layout's share of the scale, with
+the same split of zoom and pixel ratio as any page (`frameMetrics`). When that
+leaves a pixel ratio of 1 and the device size, as for a popup that follows its
+pane, the frames are painted as they come. Otherwise, for a mobile viewport,
+one with a pixel ratio of its own or a reader's zoom past the engine's, a frame
+that differs from the last only says the page changed: the helper takes a
+picture at the emulated ratio (`Page.captureScreenshot`), brings it to the
+device size and paints that, so the popup is as sharp as a tab of its own.
+Points reach such a popup's target in plain CSS pixels, the window's pixels
+over the pane's scale times the reader's zoom (`Page#topUnits`). When the strip
 is full the window answers `DropPopup` and the helper closes the window; one the
 window never answers is closed after 30 seconds. A blank popup that a script
 fills in afterwards is allowed only for the reader's own clicks, never while a
@@ -291,9 +414,57 @@ For a remote project a tab keeps the machine its page is on, so its address is
 resolved over the same SSH forward as before, and a window that restores a
 saved browser opens every tab on its own machine.
 
-The tabs are kept in the window's saved state, for each session: each with address, machine, the
-agent mark and the lock, and the one shown. State saved before tabs, which has
-one address, restores as one tab.
+The tabs are kept in the window's saved state, for each session, in the order of
+the strip: each with address, machine, title, the agent mark, the lock and the
+pin, and the one shown (`SavedBrowserTab` in `crates/pandemonium/src/view.rs`).
+A restored tab shows its saved title until its page reports one. Sealed and
+private tabs are not kept. State saved before tabs, which has one address,
+restores as one tab.
+
+### Pinned tabs and the menu of a tab
+
+A secondary press on a tab opens its menu (`browser_tab_menu.rs` in
+`pm-components`): New Tab, New Private Tab, Reload, Pin Tab or Unpin Tab, Close
+Tab and Close Other Tabs, which leaves pinned tabs open. A pinned tab moves to the
+end of the pinned tabs at the start of the strip and is drawn compact, its glyph
+alone, 36 pixels wide (`PINNED_WIDTH`); unpinning puts it right after them. The
+strip always draws the pinned tabs and scrolls only through the others
+(`Browser::strip_window`). Pins are kept across a restart, and a restored browser
+puts its pinned tabs first.
+
+### Private tabs and profiles
+
+Every page lives in a profile of the engine, its session of a partition, which
+holds its cookies, storage, cache and sign-ins. `Open` names it in `partition`
+(`View::open_in` in `pm-browser`); the window picks it for each tab when its page
+opens (`WorkspaceState::browser_partition` in
+`pm-components/src/browser_profiles.rs`):
+
+- A private tab, from Ctrl or Cmd+Shift+N or the menu of a tab, lives in
+  `private`, a profile the engine keeps in memory only. The strip marks it with a
+  detective. Nothing it visits or zooms is remembered (see
+  [What the browser remembers of sites](#what-the-browser-remembers-of-sites)),
+  a closed private tab is not offered to open again, and it is not kept across a
+  restart. A link or a window a private page opens is a private tab too
+  (`browser_tab_inherit`). When the last page in a profile kept in memory
+  closes, the helper empties it: cookies, storage, cache and HTTP authentication
+  (`release` in `src/partitions.js`).
+- With "A browser profile for each project" on under Browser in Settings
+  (`project_browser_profiles` in `GeneralSettings`), the tabs of a session live
+  in `persist:project-<hash>`, kept on disk, the hash the FNV-1a of the project's
+  address (`Project::path_hash`), so a sign-in in one project is not seen by
+  another and the profile is the same after a restart. A browser shown outside
+  any session uses the project the page shows. The setting applies to pages
+  opened after it changes.
+- Otherwise a page lives in the profile every page shares, as before.
+
+The helper makes each profile the first time a page asks for it and gives it the
+guards of permissions and downloads (`onSession` in `src/partitions.js`). A popup
+lives in its opener's profile. A helper announces the feature `partitions`
+(`PARTITIONS` in `wire.rs`); the window opens a page in a profile other than the
+shared one only on a helper that announced it, and otherwise shows the tab a
+notice to update the browser, so a private page never lands in the shared
+profile.
 
 ### Tabs belong to a session
 
@@ -333,8 +504,8 @@ browser belonged to the whole window restores into the session that was shown.
 The padlock in the address bar locks the tab shown. While it is locked the tools
 that change a page are refused with a message that says to open a tab of one's
 own: every tool except `browser_snapshot`, `browser_screenshot`,
-`browser_console`, `browser_get_bounding_box`, `browser_wait` and
-`browser_network`, which only read (`changes_page` in
+`browser_console`, `browser_get_bounding_box`, `browser_wait`,
+`browser_record` and `browser_network`, which only read (`changes_page` in
 `pm-components/src/browser_tabs.rs`; a tool nobody listed counts as changing the
 page). Closing a locked tab by `browser_tabs` is refused too. A tab an agent
 opened carries a sparkle mark in the strip and cannot be locked: agents may
@@ -401,6 +572,94 @@ keeps the window at the viewport's size, so the page is shown at the emulated
 size at the top left of the pane and the rest of the pane is empty. `reset`
 gives the size back to the pane.
 
+### The console and the network
+
+The helper's recorder (`helpers/electron-browser/src/recorder.js`) keeps the
+latest 200 console entries and requests of each page; `netview.js` filters
+them and writes them for agents.
+
+Each console entry has a number that counts up for the page, the time it was
+written, its level, its source (`address:line:column`, from the protocol's call
+stack or location) and, for uncaught exceptions, `console.error`,
+`console.assert` and `console.trace`, its call stack, at most 12 frames.
+`browser_console` writes an entry as `#12 10:04:05.120 [error] Uncaught
+TypeError: … (http://…/app.js:10:5)` with the stack indented below it, and ends
+every answer with `[cursor: N]`: given back as `since`, it returns only the
+entries written after that answer, so an agent can poll without reading old
+entries again. Pictures of the console added to the prompt use the same
+entries.
+
+`browser_network` lists requests as `#number METHOD url -> status (type)`.
+`type` keeps resource types as the engine names them (`xhr`, `fetch`,
+`document`, `script` and so on, several separated by commas), alongside
+`filter`. When a request of a text type finishes, the recorder reads its body
+at once with `Network.getResponseBody`, while the engine is sure to have it, and
+keeps it cut to 8000 characters, so a body is still there after the page
+navigates. The kept bodies are bounded: past about a million characters the
+oldest are dropped, and their request says so. What the request sent (its
+`postData`, read with `Network.getRequestPostData` when the event leaves it out)
+is kept too, cut to 4000 characters, and shown with `request`.
+
+`wait_for` makes `browser_network` wait until a request whose address matches
+finishes, then gives it in full like `request`. The pattern is text the address
+contains, or, with `*` in it, a pattern over the whole address where `*` is any
+run of characters. A matching request that finished since the previous tool
+call started counts too, so a click followed by `wait_for` does not miss a
+response that came back during the click. `type` narrows it and `timeout_ms`
+(10 seconds by default, at most 60) bounds the wait.
+
+### Recording what agents do
+
+`browser_record` with `action` `start` begins a recording
+(`helpers/electron-browser/src/recording.js`); `stop` ends it and answers with
+its summary, and `status` says whether one is under way. Recordings are kept
+per agent session: the window names the session that made each call in the
+`session` and `session_name` fields of `Tool` (`session-<scope>` and the
+session's title, `browser_caller` in `pandemonium/src/app/browser.rs`), and
+`browser_record` starts, stops or describes only the recording of the session
+that calls it. While a session's recording runs, every tool call of that
+session is kept as a step with the tool, its arguments (cut to 2000
+characters), whether it worked, the start of its answer, the page's address and
+a PNG of the page taken after it (skipped while a dialog stops the page, and
+after five seconds); other sessions' calls are not. `browser_tabs`, which the
+window answers itself, is handed to the helper afterwards as `RecordStep`, with
+what it answered and the page the session's tools now work on to picture; with
+no such page the step is kept without a picture. `browser_record` itself is not
+a step. The steps go in the folder the agent named, which must be absolute and
+not one another session records into, or else in a folder named by the time,
+the session's title and its key under `recordings` in the helper's data folder:
+`NNN-tool.png` for each step, `steps.json`, and `summary.md`, a numbered list
+that links the pictures, rewritten after every step. A recording stops itself
+after 500 steps.
+
+Secrets are never kept (`src/secrets.js`). Before a recorded `browser_type` or
+`browser_fill_form` runs, the helper asks the page whether each field it types
+into is a password field or has `autocomplete` `current-password`,
+`new-password` or `one-time-code`; the text typed into such a field is kept as
+`[redacted]`, and the field stays marked as secret in the tools' scripting
+world, even if the page later turns it into a plain field. A field that cannot
+be checked counts as secret. Any argument whose name looks like a password,
+token, secret, API key, credential or cookie is redacted whatever the tool.
+Before each step's screenshot every secret field is blurred and given
+`-webkit-text-security: disc`, and put back as it was after; a screenshot taken
+when the fields could not be blurred is not kept.
+
+Each step also travels to the window in the `step` field of the tool's
+`ToolDone` result (`RecordedStep` in `pm-browser/src/wire.rs`), with the
+session's key and name. The window reads the step's picture, leaving the file
+where it is, and adds the step to the `steps` of the browser that holds the tab
+it ran on (`pm-components/src/browser_steps.rs`), so each session's steps show
+in its own browser. The first step of a session's new recording drops that
+session's older steps and opens the panel of steps beside the page; a film
+strip button in the toolbar opens and closes it while there are steps. While
+the panel holds steps of more than one session, a row above it lists **All
+sessions** and each session by name, to list one session's steps alone. The
+panel shows the screenshot of one step with its tool, session, arguments,
+answer and address, buttons that step back and forth through the steps listed
+to replay the work, and below them every step listed with a thumbnail;
+pressing one shows it, and **Latest** goes back to following each new step as
+it arrives. The `browser-steps` snapshot shows the panel.
+
 ## File pickers
 
 A click on `<input type=file>` makes Electron open a native dialog parented to
@@ -421,6 +680,20 @@ gets a folder dialog. `accept` becomes one filter of the extensions it names
 followed by "All files", since `accept` is only a hint. A picker a page opens
 while a dialog is already open waits its turn in a queue instead of being
 dropped; the same input asking twice is asked once.
+
+## Dropping files on a page
+
+Files dragged from a file manager and let go over the page go to the page, so
+upload drop zones work. The pane's window of the page is a rustle drag and drop
+target for `DragData::FilesList` (`page_file_drop` in
+`crates/pm-components/src/browser_pointing.rs`); on the drop the window sends
+`DropFiles` with the paths and the point of the page as a `Chrome` action, and
+`src/drop.js` in the helper dispatches `dragEnter`, `dragOver` and `drop` with
+the files through the protocol's `Input.dispatchDragEvent`. The desktop hands
+the paths over only on the drop, so the page sees no drag while the files are
+held over it. A page that does not take the files would open the first one,
+which the guard that keeps the page on web addresses stops. Sealed pages, reader
+view and the developer tools take no files.
 
 ## Drop-downs and date pickers
 
@@ -479,8 +752,8 @@ offscreen pages, read from its source (`electron_api_web_contents.cc` and
 So the helper replaces `dialog.showMessageBox` for page dialogs with a promise
 that the helper settles itself (nothing native opens), records an open dialog
 from the protocol, and has `browser_handle_dialog` answer it. While a dialog is
-open every tool that talks to the page (everything but `browser_console` and
-`browser_network`) returns at once with the dialog described instead of
+open every tool that talks to the page (everything but `browser_console`,
+`browser_network` and `browser_record`) returns at once with the dialog described instead of
 hanging; a tool that makes the page open one returns as soon as it does. Every
 answer ends with a "Dialogs" list of what is open and what closed since the agent
 was last told. A dialog nobody answers is dismissed after 60 seconds. While a
@@ -522,7 +795,11 @@ ends, and never written to disk.
   within two minutes, or whose page moved on, ends as a no and is not
   remembered. A remembered Block always holds; a remembered Allow is not used
   while a tool of an agent runs on the page, so a script an agent sets off asks
-  again. Putting text on the clipboard in answer to a click is still allowed.
+  again. Answers are remembered per profile and origin: what the reader allowed
+  in one profile, such as the shared one, a project's or the private one, is
+  asked again in another, and the answers given in a profile kept in memory
+  only, such as the private one, are forgotten when its last page closes.
+  Putting text on the clipboard in answer to a click is still allowed.
 - **Certificates.** A site whose certificate is not trusted does not load. The
   helper keeps the engine's refusal (`certificate-error` is answered no) and
   reports `CertificateError` with the address, the engine's error name, who the
@@ -570,6 +847,122 @@ ends, and never written to disk.
 
 The messages for all of this were added to `wire.rs` and `types.js` after the
 existing ones; nothing before them changed.
+
+## Ads and trackers
+
+Settings, under Browser, has "Block ads and trackers", on by default
+(`block_trackers` in `GeneralSettings`). The window sends it, with the setting
+for passwords, as `Privacy { block_trackers, save_passwords }` when the helper
+starts and whenever either changes; a helper that announces
+`content-blocking` in `Features` carries it out.
+
+The helper (`src/blocker.js`, with the decisions that need no engine in
+`src/blocker-policy.js`) builds its engine with `@ghostery/adblocker-electron`
+from EasyList and EasyPrivacy, fetched from `easylist.to` with the engine's own
+network stack. It keeps the built engine in `content-blocking/engine.bin` under
+its profile, with when the lists were fetched in `lists.json`, so a start reads
+the file instead of fetching. Once an hour it looks whether the lists are a day
+old and fetches them again; a failed fetch keeps the engine it had and is tried
+again ten minutes later at the earliest. Until the first engine is built,
+nothing is blocked.
+
+In every profile pages of the web live in, `webRequest` hands each request to
+the engine: a request the lists name is cancelled, or answered with the
+harmless stand-in the lists give for it, and a document gets the content
+security policy the lists ask for. The engine's preload asks for the rules that
+hide elements of each frame, which the helper inserts as user styles. A page's
+own document is never blocked. Nothing is blocked on a page whose top frame is
+on this machine (`localhost`, names under `.localhost`, `127.0.0.0/8`, `[::1]`
+and `0.0.0.0`), so a dev server is never changed, nor on a site the reader let
+through. Sealed pages live in a session of their own that never sees the
+blocker.
+
+The helper counts the requests it stopped on each page since its document
+loaded and reports them, at most four times a second, as
+`Chrome { report: Blocking { on, blocked } }`, also after each navigation. The
+toolbar then shows a shield (`browser_privacy.rs`): accented with the count
+while it blocks, and crossed out while the site is let through; its tooltip
+says what pressing it does. Pressing it sends
+`Chrome { action: SiteBlocking { on } }`, which lets the page's host through,
+or blocks on it again, keeps the choice in `content-blocking/allowed-sites.json`
+and loads the page again.
+
+A stopped request fails in the page as `net::ERR_BLOCKED_BY_CLIENT`. It never
+reaches the network, so the developer tools show it as blocked and the network
+tool of agents (`browser_network`) does not list it; every request that does go
+out is recorded and inspected as before. Agents see the same page as the
+reader: the blocker works while their tools run too.
+
+## Saved passwords
+
+Settings, under Browser, has "Offer to save passwords", on by default
+(`save_passwords` in `GeneralSettings`), carried out by a helper that announces
+`passwords`.
+
+A preload of its own, `src/login-preload.js`, runs in the isolated world of the
+top frame of every page of the web; sealed pages never run it. It finds the
+login form around a field: the first password field of its form, or of the
+page when it is in none, and the field with `autocomplete` `username` or
+`email`, else the last text, email or telephone field before the password. It
+tells the helper (`src/passwords.js`) when the reader sends one: by submitting
+the form, pressing Enter in a field of it, or pressing a button while its
+password holds something. The page's next navigation within a minute, a new
+document or a change of its address in place, then offers to save the login as
+`Chrome { report: OfferPassword { id, origin, username, update } }`, unless the
+origin was refused or the login is saved as it is. The pane shows a bar over
+the top of the page: "Save the password of ada for example.com?" with Save,
+Never for this site and Not now, or Update when the user name is saved with
+another password. The answer is `Chrome { action: AnswerPassword { id, save,
+never } }`. An offer nobody answers closes after two minutes
+(`PasswordOfferClosed`).
+
+Logins are kept by origin in `passwords.json` under the helper's profile,
+readable by its owner alone, by `src/vault.js`. Each login, user name and
+password together, is sealed with Electron's `safeStorage`, whose key the
+system's keychain holds: the Keychain on macOS, DPAPI on Windows, and on Linux
+the Secret Service or KWallet. Only the origin is written in the clear.
+
+Where the keychain protects nothing, when `safeStorage` is unavailable or, on
+Linux, its backend is `basic_text` (a desktop without a keyring, where it would
+fall back to a key every install shares), the logins are kept instead in
+`passwords-primary.json`, sealed by a primary password the reader chooses
+(`src/primary.js`). Its key is derived with scrypt (N 2^15, r 8, p 1, a random
+16-byte salt) and seals each login with AES-256-GCM under a fresh nonce.
+`passwords-primary.key.json` holds the salt, the cost and a verifier, a known
+text sealed with the key, never the password or the key. The helper logs which
+of the two it uses when it starts.
+
+The key lives in the helper's memory only, so the vault is locked whenever the
+helper starts. When a login is to be saved, or a login field takes the keyboard
+on an origin with saved logins, while it is locked, the helper asks the pane
+with `Chrome { report: PrimaryPassword { create, origin, problem } }`: `create`
+the first time, when none is set. The pane shows a sheet over the page
+(`browser_privacy.rs`) with a hidden line, typed twice when choosing one, that
+takes the keyboard; the answer is `Chrome { action: PrimaryPassword { password }
+}`, `null` when the reader turns it down with Cancel or Escape. A refused
+answer, shorter than eight characters or not the password set, is asked again
+with `problem` saying why; a right one unlocks the vault until the helper ends,
+reports `PrimaryPasswordClosed` and carries out the save or shows the list of
+logins. A page whose reader turned the question down is not asked again on a
+login field before it navigates. Turning the setting off closes the question.
+
+When a field of a login form takes the keyboard on an origin with saved logins,
+the preload sends where the field is, and the helper reports
+`Chrome { report: LoginField { x, y, width, height, usernames } }`, the box in
+logical pixels of the page. The pane lists the user names just under the field,
+with the passwords hidden; pressing one sends
+`Chrome { action: FillLogin { username } }`, and the helper sends that login to
+the preload, which fills the form when the page is still on that origin and
+fires `input` and `change` as typing would. The field losing the keyboard to
+another part of the page, the page scrolling or navigating, or the fill takes
+the list away (`LoginFieldLeft`); the pane taking the keyboard does not.
+
+Passwords never reach the window, which sees origins and user names only, and
+none of this is open to agents: no tool reads the vault, a login sent or a
+field focused while a tool of an agent runs on the page is ignored, a fill is
+refused then, and sealed pages have no preload. A password the reader filled in
+is part of the page like anything typed, which the tools that read a page can
+see, as they can a password the reader types.
 
 ## Sealed pages
 
@@ -787,6 +1180,10 @@ page goes to another origin, the window puts back the zoom remembered for it
 beside the helper's profile is taken over by the server the first time it
 reads the store, and removed.
 
+Pages of private tabs take no part: nothing they visit, title or zoom is
+recorded, and no remembered zoom is put back on them
+(`browser_chrome_sites` in `crates/pandemonium/src/app/browser/chrome.rs`).
+
 ## Finding, zooming and loading again
 
 These work while the page holds the keyboard and are also rows of the menu over
@@ -804,8 +1201,10 @@ sent to the page (`browser_keys.rs`).
 | Alt+Left, Alt+Right, Cmd+[, Cmd+] | back, forward |
 | Ctrl+Tab, Ctrl+PgDn; Ctrl+Shift+Tab, Ctrl+PgUp | next tab; previous tab, going round |
 | Ctrl or Cmd+T; with Shift | new tab; opens again the last of the 20 tabs closed |
+| Ctrl or Cmd+Shift+N | new private tab |
 | F12, Ctrl or Cmd+Shift+I | shows or hides the developer tools |
 | Ctrl or Cmd+P | prints the page to a PDF in Downloads and opens it |
+| Ctrl or Cmd+S | saves the page with its files into Downloads |
 | Escape | leaves full screen; otherwise stops a page that is loading |
 
 The find bar has a line for the text, the count (`2 of 7`, or `No results`) and
@@ -825,8 +1224,9 @@ The menu over the page also opens the page in the system's browser, with the
 address the page really has, which is the local end of the SSH forward for a
 remote project, and asks before it clears cookies and site data. Clearing
 (`ClearData`) removes cookies, local storage, IndexedDB, service workers, cached
-files and HTTP authentication of the helper's one session, which every page of the
-browser shares, and then loads the page again.
+files and HTTP authentication of the profile the page lives in, which every page
+of that profile shares (see [Private tabs and profiles](#private-tabs-and-profiles)),
+and then loads the page again.
 
 The wire carries them as `Find`, `StopFind`, `Zoom`, `HardReload` and
 `ClearData` requests and `Found` and `Zoomed` reports, all added to the end of
@@ -869,6 +1269,31 @@ of `wire.rs` and are mirrored in `types.js`; the helper side is
 - **Printing.** `Print` makes a PDF with `printToPDF`, saves it in Downloads
   under a fresh name and opens it with the system's viewer; `Printed` says
   where, and the note above the page shows it.
+- **Saving the page.** Save Page As in the menu, or the shortcut key with S,
+  sends `SavePage`: the helper saves the page with `savePage` as a complete web
+  page, its document named from its title under a fresh name in Downloads and
+  the pictures, styles and scripts it uses in a folder beside it
+  (`savePage` in `src/safety.js`). It is reported as `Download` reports are, so
+  it shows in the list of downloads, where it can be shown in its folder or
+  opened. Sealed pages are not saved.
+- **Reader view.** When a page stops loading, and again 1.5 s later for pages
+  that build their article late, the helper runs the quick check of
+  `@mozilla/readability` (`isProbablyReaderable`) in a world of its own that
+  the page's scripts cannot reach, and reports `Readable` when the answer
+  changes; it reports it no longer once the page starts loading another
+  document (`src/reader.js`). While it is, the bar shows a book button. Pressing
+  it sends `ReadArticle`; the helper runs the readability algorithm on a copy of
+  the document and answers with `Article`: the title, byline, site, language,
+  direction and the cleaned content as HTML, at most 240 KiB, or why there is
+  none. The window writes it into a document in the colours of the app's theme
+  (`crates/pm-components/src/browser_reader.rs`) and shows it in a sealed page
+  (`OpenHtml`) in place of the tab's page (`crates/pandemonium/src/app/browser/reader.rs`);
+  pictures, media and frames are hidden, since a sealed page loads nothing. The
+  button, now pressed, goes back to the page, as do back, forward, reload, stop
+  and the page going to another address. Keys, the pointer, copying and finding
+  work in the article; actions about the page, such as saving it, go to the
+  page. The bundle carries the algorithm's files in the helper's
+  `node_modules/@mozilla/readability`.
 
 ## Picking an element
 
@@ -950,6 +1375,48 @@ Settings and open it with the Open Browser command.
 `make install` bundles the helper the way a release does and installs it beside
 the window in `~/.local/bin`.
 
+## Testing the helper end to end
+
+`make browser-e2e` runs the tests in `helpers/electron-browser/e2e` (`npm run
+e2e` there) against the real helper. `e2e/harness.js` starts it as
+`Engine::start` does: a loopback listener, a token in
+`PANDEMONIUM_BROWSER_TOKEN`, `--control`, `--surfaces` and `--profile` in a
+scratch folder under `~/.cache/scratch/pandemonium`, the token as the first
+line, then `Features` and `Ready`. The tests speak the line protocol to it and
+read the surface files as the window does. `e2e/fixtures.js` serves the pages
+from two local servers, one on `127.0.0.1` and one on `localhost`, so a frame of
+the second is cross-site and runs in a process of its own. The helper sees a
+home folder of its own, so downloads land in the scratch folder on Linux.
+
+They cover painting at scales 1 and 2, resizing and rescaling, a page larger
+than the screen, clicks and typing in the top frame and in same-origin and
+cross-origin frames, a box laid over part of a cross-origin frame, before
+and after it moves, the delay of the last of a burst of 300 pointer moves,
+copy, cut, paste and undo, Control+/ and keys of other layouts, loading,
+`LoadFailed`, `History`, `Stop`, a killed renderer and its reload, popups,
+dialogs, the menu of a right click, downloads, find, zoom and an agent's
+screenshot. `e2e/scale.test.js` checks, at scale 2, the pixel ratio and layout
+width of the top frame and of a cross-origin frame, where presses land and the
+size of what is painted: at a reader's zoom of 500%, with an agent's viewport of
+its own pixel ratio, with a mobile one, which also has its cross-origin frame
+report its ratio, through a change of device and a reset, and in an adopted
+popup with each of them. With `PANDEMONIUM_E2E_SHOTS` set to a folder it also writes each picture
+it checks there as raw BGRA, named with its size, to look at. An agent's tool makes what the page does for the next five seconds
+count as the agent's (`GRACE` in `src/restriction.js`), so tests of the
+reader's own popups and dialogs wait that out (`Helper#readerTurn`).
+
+Without a display on Linux the target runs them under `xvfb-run` with a
+1024 by 768 screen and `XDG_SESSION_TYPE=x11`, so the launcher's
+`--ozone-platform-hint=auto` picks X11; Chromium's headless platform paints
+nothing useful. `PANDEMONIUM_E2E_ARGS` adds engine switches and
+`PANDEMONIUM_BROWSER_HELPER` names another helper to test. CI runs them on
+Linux and macOS.
+
+Known limit: a window that a page opens with `window.open` never paints. Electron
+45 gives it no offscreen view of its own size, so it lays out at 0 by 0; its
+address, title, `window.opener` and closing work. The test of its painting is
+marked to do.
+
 ## Where the window finds the helper
 
 In order: the program named by `PANDEMONIUM_BROWSER_HELPER`; the one the
@@ -970,6 +1437,9 @@ would break its signature. The release workflow builds
 window downloads the one for its system from the release of its own version and
 checks the checksum. `PANDEMONIUM_BROWSER_URL` names a folder or address to use
 instead.
+
+The helper's packages other than Electron, such as the blocker of ads and
+trackers, go in `node_modules` beside its files.
 
 Linux and macOS start the helper through a `pandemonium-browser` launcher script
 beside an `electron` folder. On Windows the archive is Electron itself, with
