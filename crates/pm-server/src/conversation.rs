@@ -199,7 +199,7 @@ fn history(log: &[(u64, Event)]) -> String {
     history
 }
 
-/// The log of a session with its conversation taken from what the harness saved: the turns the harness has, each as the events a live turn would have told, in place of the ones the log holds; what the harness does not know of, such as queued prompts, stays where it was. The choices the harness saved for the settings are put into the last list of settings the log holds, and what the harness says the conversation cost takes the place of what the log says.
+/// The log of a session with its conversation taken from what the harness saved: the turns the harness has, each as the events a live turn would have told, in place of the ones the log holds; what the harness does not know of, such as queued prompts, stays where it was. The choices the harness saved for the settings are put into the last list of settings the log holds, and what the harness says the conversation cost takes the place of what the log says. Every turn the result tells has ended, so the questions the agent waited on, permissions, forms and trust, are left out rather than asked again.
 ///
 /// A turn keeps the id the harness saved it under, and whether its files were kept is carried over from the log. A turn the harness dropped, because it was stopped or failed, is gone from the result. An exhibit the agent showed, which only the log holds, goes straight after the tool call that showed it, and is gone with a turn that is. The events are numbered again from one.
 pub(crate) fn from_saved(
@@ -230,7 +230,12 @@ pub(crate) fn from_saved(
         !conversational(event)
             && !matches!(
                 event,
-                Event::Prompted { .. } | Event::Rewound { .. } | Event::Show(_)
+                Event::Prompted { .. }
+                    | Event::Rewound { .. }
+                    | Event::Show(_)
+                    | Event::Ask(_)
+                    | Event::Inquire(_)
+                    | Event::Trust(_)
             )
             && !(offered && matches!(event, Event::Settings(_)))
             && !(commanded && matches!(event, Event::Commands(_)))
@@ -495,6 +500,36 @@ mod tests {
             (1..=8).collect::<Vec<u64>>()
         );
         assert_eq!(turns(&rebuilt).len(), 2);
+    }
+
+    /// A form of questions the agent waited on in a turn that has since ended is not asked again.
+    #[test]
+    fn questions_of_ended_turns_are_not_asked_again() {
+        let log: Vec<(u64, Event)> = vec![
+            (1, prompted("one", 1, false)),
+            (
+                2,
+                Event::Inquire(pm_harness::Inquiry {
+                    ticket: 7,
+                    questions: Vec::new(),
+                }),
+            ),
+            (3, Event::Finished(None)),
+        ];
+        let saved = pm_harness::Conversation {
+            turns: vec![PastTurn {
+                id: Some("1".to_owned()),
+                prompt: "one".to_owned(),
+                files: Vec::new(),
+                events: vec![pm_harness::WireEvent::Finished(None)],
+            }],
+            ..Default::default()
+        };
+        let rebuilt = from_saved(&log, &saved);
+        assert_eq!(
+            rebuilt,
+            vec![(1, prompted("one", 1, false)), (2, Event::Finished(None))]
+        );
     }
 
     /// The choices the harness saved become the current values of the settings the log last offered, and nothing is saved for the rest.
