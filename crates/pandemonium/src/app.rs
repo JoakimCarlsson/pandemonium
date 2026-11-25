@@ -1767,9 +1767,11 @@ impl App {
     /// page for starting work otherwise. Types that text into it, so the box takes focus only
     /// once the reader starts to type. Says whether it took the key.
     fn type_into_prompt(&mut self, event: &KeyEvent) -> bool {
-        let Some(text) = event.text.as_deref().filter(|text| {
-            !text.is_empty() && !text.chars().any(char::is_control)
-        }) else {
+        let Some(text) = event
+            .text
+            .as_deref()
+            .filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
+        else {
             return false;
         };
         if event.modifiers.ctrl || event.modifiers.meta || self.focus.focused().is_some() {
@@ -1788,7 +1790,10 @@ impl App {
         let text = text.to_owned();
         self.model.update(|state| {
             *state = std::mem::take(state).in_workspace(|state| {
-                state.handle(Event::Field(FieldEvent::Typed { field: prompt, text }))
+                state.handle(Event::Field(FieldEvent::Typed {
+                    field: prompt,
+                    text,
+                }))
             })
         });
         self.focus.request_focus(prompt);
