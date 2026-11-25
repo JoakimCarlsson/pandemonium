@@ -39,13 +39,16 @@ const MOST_FOLDERS: usize = 20_000;
 /// The folders, inside a folder git keeps its state in, whose changes never matter to what git shows.
 const IGNORED_IN_GIT: [&str; 2] = ["objects", "logs"];
 
+/// Whether a watched folder is watched as one tree from its root rather than folder by folder: on macOS every watch added restarts the one FSEvents stream and loses the changes made meanwhile, while the stream watches a whole tree at no extra cost.
+const WHOLE_TREE: bool = cfg!(target_os = "macos");
+
 /// A folder a client watches, and where its changes are seen.
 struct Folder {
     /// Where the files are.
     root: PathBuf,
     /// Where the files are with every link resolved, as some systems, macOS among them, report changes.
     real: PathBuf,
-    /// The folders inside it that are watched, itself first, each watched without what is inside it.
+    /// The folders inside it that are watched, itself first, each watched without what is inside it; only itself, watched whole, when [`WHOLE_TREE`].
     walked: Vec<PathBuf>,
     /// The folders git keeps the state of its worktree in, when they are outside it, each with how deep it is watched.
     git: Vec<(PathBuf, RecursiveMode)>,
@@ -74,7 +77,11 @@ impl Folder {
         }
         let real = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
         let mut walked = Vec::new();
-        walk(&real, &mut walked);
+        if WHOLE_TREE {
+            walked.push(real.clone());
+        } else {
+            walk(&real, &mut walked);
+        }
         Self {
             root,
             real,
@@ -92,7 +99,11 @@ impl Folder {
 
     /// Watches the folder `created`, and the folders inside it, when it was made inside this one where it matters.
     fn grown(&mut self, created: &Path) -> bool {
-        if !created.is_dir() || self.inside(created).is_none() || !self.concerns(created) {
+        if WHOLE_TREE
+            || !created.is_dir()
+            || self.inside(created).is_none()
+            || !self.concerns(created)
+        {
             return false;
         }
         if self.walked.iter().any(|held| held == created) {
@@ -107,7 +118,14 @@ impl Folder {
         let mut paths: Vec<(PathBuf, RecursiveMode)> = self
             .walked
             .iter()
-            .map(|folder| (folder.clone(), RecursiveMode::NonRecursive))
+            .map(|folder| {
+                let mode = if WHOLE_TREE {
+                    RecursiveMode::Recursive
+                } else {
+                    RecursiveMode::NonRecursive
+                };
+                (folder.clone(), mode)
+            })
             .collect();
         paths.extend(self.git.iter().cloned());
         paths
@@ -297,10 +315,10 @@ impl Watching {
         }
     }
 
-    /// Notes the folders a change of `paths` concerns as changed at `now`.
-    fn noted(&mut self, paths: &[PathBuf], now: Instant) {
+    /// Notes the folders a change of `paths` concerns as changed at `now`, or every folder when `rescan` says the watcher lost track of what changed.
+    fn noted(&mut self, paths: &[PathBuf], rescan: bool, now: Instant) {
         for (directory, folder) in &self.folders {
-            if paths.iter().any(|path| folder.concerns(path)) {
+            if rescan || paths.iter().any(|path| folder.concerns(path)) {
                 self.changed
                     .entry(directory.clone())
                     .and_modify(|changed| changed.last = now)
@@ -360,7 +378,7 @@ pub(crate) fn start(core: Arc<Core>) {
                             EventKind::Remove(_) => watching.shrunk(&event.paths),
                             _ => {}
                         }
-                        watching.noted(&event.paths, Instant::now());
+                        watching.noted(&event.paths, event.need_rescan(), Instant::now());
                     }
                 }
                 Ok(_) | Err(RecvTimeoutError::Timeout) => {}
