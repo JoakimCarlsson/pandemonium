@@ -2496,6 +2496,7 @@ impl WorkspaceState {
                 self.file = None;
                 self.comment_target = None;
                 self.fresh_git();
+                self.outbox.push(Outgoing::Refresh { session: index });
                 self.chat_list
                     .scroll()
                     .jump_to(self.sessions[index].chat_back);

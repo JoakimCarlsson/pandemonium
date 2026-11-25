@@ -363,7 +363,8 @@ fn changes(state: &WorkspaceState, session: &Session) {
         nothing("Reading the folder…");
         return;
     }
-    if !session.on_branch
+    if !state.git.folder
+        && !session.on_branch
         && session.branch.is_empty()
         && session.changes.is_empty()
         && state.git.history.is_empty()
@@ -387,8 +388,10 @@ fn changes(state: &WorkspaceState, session: &Session) {
                         trouble(said);
                     }
                     if state.git.changes_open {
-                        message_box(state);
-                        commit_button(state, &primary);
+                        if !overview(state) {
+                            message_box(state);
+                            commit_button(state, &primary);
+                        }
                         scrolling_list(state, || {
                             change_list::rows(state, session);
                             if session.changes.is_empty() {
@@ -400,12 +403,19 @@ fn changes(state: &WorkspaceState, session: &Session) {
                     }
                 },
             );
-            graph(state);
+            if !overview(state) {
+                graph(state);
+            }
         },
     );
 }
 
-/// Emits the rows of the list of repositories of `session`'s folder, when it has submodules: its own and each submodule, nested ones set in under the one they are in, each with what it has checked out on a button that opens its branches; the one the panel works on is picked.
+/// Whether the panel shows a folder of repositories with none picked: the changes of all of them, read only, since a commit belongs to one.
+fn overview(state: &WorkspaceState) -> bool {
+    state.git.folder && state.git.repository.is_none()
+}
+
+/// Emits the rows of the list of repositories of `session`'s folder, when it has submodules or holds repositories side by side: its own, unless it is no repository, and each of the others, nested ones set in under the one they are in, each with what it has checked out on a button that opens its branches; the one the panel works on is picked, and picking it again in a folder of repositories goes back to all of them. Those without changes are dimmed.
 #[track_caller]
 fn repositories(state: &WorkspaceState, session: &Session) {
     let repositories = state.repositories();
@@ -449,20 +459,26 @@ fn repositories(state: &WorkspaceState, session: &Session) {
                 || line("Repositories", 12, 1.4, Role::Subtle),
             );
             for (place, repository) in repositories.iter().enumerate() {
+                if state.git.folder && repository.is_none() {
+                    continue;
+                }
                 let changed = session
                     .changes
                     .iter()
                     .filter(|change| change.is_listed_in(repository.as_deref()))
                     .count();
                 let head = state.head_of(repository.as_deref()).unwrap_or_default();
-                Tile::new(Target::Git(GitEvent::Repository(place)))
-                    .selected(state.git.repository == *repository)
+                let picked = state.git.repository == *repository;
+                let target = if state.git.folder && picked { 0 } else { place };
+                let depth = depth(repository) - usize::from(state.git.folder);
+                Tile::new(Target::Git(GitEvent::Repository(target)))
+                    .selected(picked)
                     .height(7.0)
                     .gap(2.0)
                     .radius(Radius::Sm)
                     .modifier(Modifier::new().fill_max_width())
                     .inner(Modifier::new().padding_each(
-                        theme::sp(2.0 + depth(repository) as f32 * 3.5),
+                        theme::sp(2.0 + depth as f32 * 3.5),
                         0.0,
                         theme::sp(1),
                         0.0,
@@ -477,7 +493,15 @@ fn repositories(state: &WorkspaceState, session: &Session) {
                             3.5,
                             Role::Muted,
                         );
-                        clipped(name(repository), 13, Role::Text);
+                        clipped(
+                            name(repository),
+                            13,
+                            if changed > 0 || picked || !state.git.folder {
+                                Role::Text
+                            } else {
+                                Role::Muted
+                            },
+                        );
                         if changed > 0 {
                             line(changed.to_string(), 11, 1.4, Role::Subtle);
                         }
@@ -495,9 +519,20 @@ fn repositories(state: &WorkspaceState, session: &Session) {
     );
 }
 
-/// Emits the button that shows the branch the repository the panel works on is on and opens the list of branches, or, outside a repository, only says so.
+/// Emits the button that shows the branch the repository the panel works on is on and opens the list of branches, or, outside a repository, only says so. In a folder of repositories with one picked, it names the folder first, as a button back to all of them.
 fn branch_button(state: &WorkspaceState, session: &Session, working: bool) {
-    if session.branch.is_empty() {
+    let project = state
+        .project_of(session)
+        .map_or_else(String::new, |project| project.name.clone());
+    if state.git.folder {
+        button::small_button(
+            format!("{project} ›"),
+            Target::Git(GitEvent::Repository(0)),
+            Variant::Ghost,
+        )
+        .tooltip("All Repositories")
+        .build();
+    } else if session.branch.is_empty() {
         let said = if session.unknown {
             "Reading the folder…"
         } else {
@@ -591,7 +626,7 @@ pub fn review(state: &WorkspaceState, session: &Session) {
                                     .build();
                             }
                         });
-                        if versioned {
+                        if versioned && !overview(state) {
                             parts::bar(10, 3, 2, || {
                                 branch_button(state, session, state.git.working)
                             });

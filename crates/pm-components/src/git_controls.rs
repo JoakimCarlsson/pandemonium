@@ -104,6 +104,8 @@ pub struct GitControls {
     pub repository: Option<String>,
     /// What each checked out submodule of the open session's folder has checked out: its path and its branch, or `@` and the commit.
     pub submodule_heads: Vec<(String, String)>,
+    /// Whether the open session's folder is no repository but holds repositories side by side; nothing picked then shows the changes of all of them, with nothing to commit.
+    pub folder: bool,
     /// What branches are searched for and a new one is named by.
     pub filter: TextFieldState,
     /// The files open in the window, one tab each, in the order the tabs are in.
@@ -156,6 +158,7 @@ impl Default for GitControls {
             branches: Vec::new(),
             repository: None,
             submodule_heads: Vec::new(),
+            folder: false,
             filter: TextFieldState::default(),
             viewers: Vec::new(),
             shown: None,
@@ -766,8 +769,13 @@ impl WorkspaceState {
         }
     }
 
-    /// The state after the server said what the submodules of the folder of the session at `session` have checked out; a submodule picked that is no longer there gives the panel back to the folder's own repository.
-    pub fn with_submodule_heads(mut self, session: usize, heads: Vec<(String, String)>) -> Self {
+    /// The state after the server said what the submodules of the folder of the session at `session` have checked out, or its repositories when `folder` says it holds them side by side; a submodule picked that is no longer there gives the panel back to the folder's own repository.
+    pub fn with_submodule_heads(
+        mut self,
+        session: usize,
+        heads: Vec<(String, String)>,
+        folder: bool,
+    ) -> Self {
         if self.review_index() == Some(session) {
             if let Some(picked) = &self.git.repository
                 && !heads.iter().any(|(path, _)| path == picked)
@@ -775,6 +783,7 @@ impl WorkspaceState {
                 self.git.repository = None;
             }
             self.git.submodule_heads = heads;
+            self.git.folder = folder;
         }
         self
     }

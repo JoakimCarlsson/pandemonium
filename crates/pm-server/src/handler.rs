@@ -806,9 +806,13 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::DevContainer { directory } => Response::DevContainer {
             configured: pm_transport::configured(&place(&directory)),
         },
-        Request::SubmoduleHeads { directory } => Response::SubmoduleHeads {
-            heads: pm_git::submodule_heads(&place(&directory)),
-        },
+        Request::SubmoduleHeads { directory } => {
+            let folder = place(&directory);
+            Response::SubmoduleHeads {
+                heads: pm_git::submodule_heads(&folder),
+                folder: matches!(pm_git::layout(&folder), pm_git::Layout::Repositories(_)),
+            }
+        }
         Request::Identity { agent, login } => match agent_named(&agent) {
             Some(agent) => Response::Identity {
                 default: pm_harness::default_account(agent),

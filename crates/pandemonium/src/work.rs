@@ -3024,8 +3024,8 @@ impl Work {
                 }
             }
             Pending::SubmoduleHeads(session) => {
-                if let Response::SubmoduleHeads { heads } = response {
-                    model.change(|state| state.with_submodule_heads(session, heads));
+                if let Response::SubmoduleHeads { heads, folder } = response {
+                    model.change(|state| state.with_submodule_heads(session, heads, folder));
                 }
             }
             Pending::SessionBranches(session) => {

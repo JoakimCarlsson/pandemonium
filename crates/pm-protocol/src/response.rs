@@ -129,6 +129,9 @@ pub enum Response {
     SubmoduleHeads {
         /// Each submodule's path from the root and its branch, or `@` and the commit on a detached head.
         heads: Vec<(String, String)>,
+        /// Whether the folder is no repository itself but holds repositories side by side, each of which `heads` names first.
+        #[serde(default)]
+        folder: bool,
     },
     /// The history of a repository.
     Log {

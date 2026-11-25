@@ -1659,7 +1659,9 @@ fn changes_repositories(picked: bool) -> WorkspaceState {
     state.git.submodule_heads = vec![
         ("api".to_owned(), "task/339-shared-branch".to_owned()),
         ("web".to_owned(), "task/339-shared-branch".to_owned()),
+        ("docs".to_owned(), "main".to_owned()),
     ];
+    state.git.folder = true;
     if picked {
         state.git.repository = Some("api".to_owned());
     }

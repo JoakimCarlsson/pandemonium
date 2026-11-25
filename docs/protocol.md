@@ -300,6 +300,9 @@ one fails, and the `failed` message names each child that did, as `name: why`.
 `revision_changes` fail, for such a folder: they need one repository. Such a folder is one even when it sits inside another
 repository; a folder with a `.git` entry of its own is a repository. A child that has submodules keeps
 everything said of them, its submodules' paths written from `directory`.
+`submodule_heads` names each child, then its submodules, and says
+`folder: true` for such a folder (`false`, or absent from older servers,
+otherwise).
 
 - **`discover`:** starts the agent briefly and returns what it lets the reader
   change (models, modes, effort) and the commands it offers behind a slash.
