@@ -945,6 +945,24 @@ impl Work {
         self.opened_terminal(model, &None, tab, terminal);
     }
 
+    /// Takes the session at `session` to be the one numbered `number` on this machine, as the server says once it started it.
+    #[cfg(test)]
+    pub fn session_started(&mut self, model: &Model, session: usize, number: u64) {
+        self.answered(
+            model,
+            &None,
+            Pending::Start(session),
+            Response::Started {
+                session: number,
+                directory: String::new(),
+                branch: None,
+                head: None,
+                skipped: Vec::new(),
+                tree: Default::default(),
+            },
+        );
+    }
+
     /// Takes what offline work was asked to send, by machine, since the last time.
     #[cfg(test)]
     pub fn asked(&mut self) -> Vec<(Host, Request)> {
@@ -2847,6 +2865,7 @@ impl Work {
                     }
                     self.numbers.insert(session, (host.clone(), number));
                     self.positions.insert((host.clone(), number), session);
+                    self.claim_shells(model, session);
                     if let Some(client) = self.links.get(host).and_then(|link| link.client.as_ref())
                     {
                         client.watch(number, 0);
@@ -3280,6 +3299,42 @@ impl Work {
         }
         for item in self.held.remove(&tab).unwrap_or_default() {
             self.send_to_terminal(host, tab, terminal, item);
+        }
+        if let Some(session) = model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            state
+                .sessions
+                .iter()
+                .position(|held| held.terminals.iter().any(|shell| shell.id == tab))
+        }) {
+            self.claim_shells(model, session);
+        }
+    }
+
+    /// Has the server make every shell the session at `session` shows belong to it, once the server has numbered both, so that closing the session ends them: a shell opened on the page for starting work moves to the session started there without the server knowing.
+    fn claim_shells(&mut self, model: &Model, session: usize) {
+        let Some((_, number)) = self.server_number(session) else {
+            return;
+        };
+        let tabs: Vec<u64> = model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            state
+                .sessions
+                .get(session)
+                .map(|held| held.terminals.iter().map(|shell| shell.id).collect())
+                .unwrap_or_default()
+        });
+        for tab in tabs {
+            if let Some((host, terminal)) = self.tabs.get(&tab).cloned() {
+                self.ask(
+                    &host,
+                    Request::ClaimTerminal {
+                        terminal,
+                        session: number,
+                    },
+                    Pending::Nothing,
+                );
+            }
         }
     }
 

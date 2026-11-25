@@ -113,10 +113,16 @@ fn closing_a_session_ends_only_the_shells_in_its_worktree() {
     let inside = shell_in(&core, &worktree, None);
     let project = shell_in(&core, &repository, None);
     let owned = shell_in(&core, &repository, Some(first));
+    let claimed = shell_in(&core, &repository, None);
+    assert!(core.claim_terminal(claimed, first));
 
     assert!(matches!(close_session(&core, first, false), Response::Done));
     assert!(alive(&core, inside), "a shared worktree keeps its shells");
     assert!(gone(&core, owned), "the session's own shell is ended");
+    assert!(
+        gone(&core, claimed),
+        "a shell handed to the session is ended"
+    );
 
     std::fs::write(worktree.join("file"), "changed").expect("file");
     assert!(matches!(

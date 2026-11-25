@@ -67,7 +67,7 @@ pub(crate) struct Terminal {
     /// The folder it was started in.
     directory: String,
     /// The session it belongs to, whose closing ends it.
-    session: Option<u64>,
+    session: Mutex<Option<u64>>,
     /// The size of its window, as columns and rows.
     size: Mutex<(u16, u16)>,
     /// The master side of the pseudo-terminal, which resizes it.
@@ -160,7 +160,7 @@ impl Terminal {
             .map_err(|error| error.to_string())?;
         Ok(Self {
             directory: label.to_owned(),
-            session,
+            session: Mutex::new(session),
             size: Mutex::new((columns, rows)),
             master: Mutex::new(pair.master),
             writer: Mutex::new(writer),
@@ -474,6 +474,25 @@ impl Core {
             .is_some()
     }
 
+    /// Makes the shell numbered `number` belong to session `session`, as when it was opened on the page for starting work and handed to the session started there; returns whether there is such a shell.
+    pub(crate) fn claim_terminal(&self, number: u64, session: u64) -> bool {
+        let terminal = self
+            .terminals
+            .lock()
+            .ok()
+            .and_then(|held| held.get(&number).cloned());
+        match terminal
+            .as_ref()
+            .and_then(|terminal| terminal.session.lock().ok())
+        {
+            Some(mut owner) => {
+                *owner = Some(session);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Ends the shell numbered `number` and forgets it; false when there is none.
     pub(crate) fn close_terminal(&self, number: u64) -> bool {
         let removed = self
@@ -513,7 +532,12 @@ impl Core {
             |_| Vec::new(),
             |held| {
                 held.iter()
-                    .filter(|(_, terminal)| terminal.session == Some(session))
+                    .filter(|(_, terminal)| {
+                        terminal
+                            .session
+                            .lock()
+                            .is_ok_and(|owner| *owner == Some(session))
+                    })
                     .map(|(number, _)| *number)
                     .collect()
             },

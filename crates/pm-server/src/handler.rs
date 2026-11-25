@@ -1989,6 +1989,9 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             columns,
             rows,
         } => terminal_done(core.resize_terminal(terminal, columns, rows), terminal),
+        Request::ClaimTerminal { terminal, session } => {
+            terminal_done(core.claim_terminal(terminal, session), terminal)
+        }
         Request::CloseTerminal { terminal } => {
             terminal_done(core.close_terminal(terminal), terminal)
         }

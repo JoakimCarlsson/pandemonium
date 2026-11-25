@@ -326,6 +326,13 @@ pub enum Request {
         /// The subagent, by the id its `Subagent` event gave it.
         subagent: String,
     },
+    /// Makes a shell belong to a session, so that closing the session ends it, as when the shell was opened on the page for starting work and the session started there took it over.
+    ClaimTerminal {
+        /// The shell.
+        terminal: u64,
+        /// The session.
+        session: u64,
+    },
     /// Stops one command or task a session's agent left running in the background, while any turn goes on.
     StopBackground {
         /// The session.

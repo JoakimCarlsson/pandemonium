@@ -200,6 +200,7 @@ request with exactly one `response` carrying the same `id`.
 | `terminal_input`| `terminal`, `data` (base64)                                                                     | `done`          |
 | `resize_terminal`| `terminal`, `columns`, `rows`                                                                  | `done`          |
 | `close_terminal`| `terminal`                                                                                      | `done`          |
+| `claim_terminal`| `terminal`, `session`: makes the shell belong to the session, so `close_session` ends it        | `done`          |
 | `attach_terminal`| `terminal`, `after`                                                                            | `done`          |
 | `terminals`    | none                                                                                             | `terminals`     |
 | `tasks`        | `directory`                                                                                      | `tasks`         |

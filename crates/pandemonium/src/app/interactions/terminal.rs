@@ -161,3 +161,38 @@ fn the_shell_fits_the_size_its_window_is_laid_out_at() {
     assert_ne!(second, first);
     assert_eq!(held(&rig), Some(second));
 }
+
+/// A shell opened on the page for starting work goes with the session started there, and the server is asked to make it that session's, so that archiving the session ends it.
+#[test]
+fn a_shell_handed_to_a_new_session_is_claimed_for_it() {
+    let mut rig = Rig::shot(Shot::WelcomeTerminal);
+    let tab = rig
+        .state(|state| state.active_terminal().map(|tab| tab.id))
+        .expect("a shell shows");
+    let model = rig.app.borrow().model.clone();
+    rig.app.borrow_mut().work.terminal_opened(&model, tab, 7);
+    rig.click_on(Target::Composer(
+        pm_components::areas::ComposerEvent::Prompt,
+    ));
+    rig.type_text("make run");
+    rig.key(Key::Enter);
+    let session = rig
+        .state(|state| state.open_index())
+        .expect("a session was started");
+    assert!(rig.state(|state| {
+        state.sessions[session]
+            .terminals
+            .iter()
+            .any(|shell| shell.id == tab)
+    }));
+    let _ = sent(&mut rig);
+    rig.app
+        .borrow_mut()
+        .work
+        .session_started(&model, session, 42);
+    let asked = sent(&mut rig);
+    assert!(
+        asked.contains("ClaimTerminal { terminal: 7, session: 42 }"),
+        "{asked}"
+    );
+}
