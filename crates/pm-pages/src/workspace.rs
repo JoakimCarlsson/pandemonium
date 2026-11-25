@@ -1,6 +1,6 @@
 //! The workspace window: the sidebar of projects and sessions beside the page the reader is on.
 
-use pm_components::areas::{BrowserEvent, ComposerEvent, MenuEvent, TerminalEvent, WindowEvent};
+use pm_components::areas::{BrowserEvent, MenuEvent, TerminalEvent, WindowEvent};
 use pm_components::focus::request_focus_on;
 use pm_components::target::Target;
 use pm_components::theme;
@@ -25,16 +25,13 @@ use pm_components::state::Page;
 use crate::panes;
 
 /// Gives the keyboard, from effects the screen holds, to what was asked to take it: the
-/// prompt once the page for starting work shows, the shell each time a press asked for
-/// it and the browser's address each time the browser was opened or brought forward, as
-/// a Compose screen runs `LaunchedEffect(asked) { focusRequester.requestFocus() }`. Held by
-/// the screen, a shell or an address that shows again without being asked for keeps out
-/// of it.
+/// shell each time a press asked for it and the browser's address each time the browser
+/// was opened or brought forward, as a Compose screen runs
+/// `LaunchedEffect(asked) { focusRequester.requestFocus() }`. Held by the screen, a shell or
+/// an address that shows again without being asked for keeps out of it. The prompt is
+/// not asked for here: typing with nothing focused hands it the keyboard.
 #[track_caller]
 fn keyboard_asks(state: &WorkspaceState) {
-    if state.starting() {
-        request_focus_on(Target::Composer(ComposerEvent::Prompt), &());
-    }
     if state.shell_asked > 0 {
         request_focus_on(
             Target::Terminal(TerminalEvent::TerminalBody),

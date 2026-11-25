@@ -335,12 +335,7 @@ impl FolderPicker {
     #[track_caller]
     pub fn view(&self) {
         rustle::column_arranged(
-            Modifier::new()
-                .weight(1.0)
-                .fill_max_width()
-                .chain(crate::focus::keeps_keyboard_in(Target::Dialog(
-                    DialogEvent::PickerField,
-                ))),
+            Modifier::new().weight(1.0).fill_max_width(),
             Arrangement::Start,
             Alignment::Start,
             || {

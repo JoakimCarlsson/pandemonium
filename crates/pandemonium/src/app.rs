@@ -1757,8 +1757,41 @@ impl App {
                 self.focus.free_focus();
             }
             Key::Escape => self.focus.free_focus(),
-            _ => return self.focused_key(event),
+            _ => return self.focused_key(event) || self.type_into_prompt(event),
         }
+        true
+    }
+
+    /// Hands the keyboard to the box typing goes to when `event` types text while nothing
+    /// holds focus: the folder picker's filter while the picker is open, the prompt on a
+    /// page for starting work otherwise. Types that text into it, so the box takes focus only
+    /// once the reader starts to type. Says whether it took the key.
+    fn type_into_prompt(&mut self, event: &KeyEvent) -> bool {
+        let Some(text) = event.text.as_deref().filter(|text| {
+            !text.is_empty() && !text.chars().any(char::is_control)
+        }) else {
+            return false;
+        };
+        if event.modifiers.ctrl || event.modifiers.meta || self.focus.focused().is_some() {
+            return false;
+        }
+        let prompt = match self.on_aside {
+            Some(asides::Aside::Picker) => Target::Dialog(DialogEvent::PickerField),
+            None if self.model.read(|screen| match screen {
+                Screen::Workspace(state) => state.starting(),
+            }) =>
+            {
+                Target::Composer(ComposerEvent::Prompt)
+            }
+            _ => return false,
+        };
+        let text = text.to_owned();
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| {
+                state.handle(Event::Field(FieldEvent::Typed { field: prompt, text }))
+            })
+        });
+        self.focus.request_focus(prompt);
         true
     }
 
