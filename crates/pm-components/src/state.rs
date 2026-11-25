@@ -2483,6 +2483,9 @@ impl WorkspaceState {
             }
             Target::Sidebar(SidebarEvent::Session(index)) if index < self.sessions.len() => {
                 self.sessions[index].closed = false;
+                if let Some(open) = self.open_index() {
+                    self.sessions[open].chat_back = self.chat_list.scroll().offset();
+                }
                 if let Page::Session(before) = self.page
                     && before != index
                 {
@@ -3339,6 +3342,27 @@ impl WorkspaceState {
             || self.open_index().is_some_and(|index| {
                 self.sessions[index].chat_back != self.chat_list.scroll().offset()
             })
+    }
+
+    /// Whether a scroll since the state last looked must be followed at once rather
+    /// than once scrolling rests: the diff moved while it is anchored to a file, which
+    /// a scroll by hand lets go, or while some of its files' diffs are still to be asked
+    /// for. Following writes the screen, which composes every region reading it again,
+    /// so a plain scroll leaves it until the reader stops.
+    pub fn scroll_is_urgent(&self) -> bool {
+        if self.diff_list.scroll().offset() == self.diff_seen {
+            return false;
+        }
+        self.diff_anchor.is_some()
+            || self
+                .review_index()
+                .and_then(|index| self.sessions.get(index).map(|session| (index, session)))
+                .is_some_and(|(index, session)| {
+                    session.changes.iter().any(|change| {
+                        (!change.loaded || change.stale)
+                            && !self.asking_diffs.contains(&(index, change.path.clone()))
+                    })
+                })
     }
 
     /// Whether the conversation is shown at its end, give or take a pixel.

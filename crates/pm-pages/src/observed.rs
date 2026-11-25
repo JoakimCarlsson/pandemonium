@@ -45,7 +45,7 @@ pub fn provide<R>(screen: ScreenState, content: impl FnOnce() -> R) -> R {
 #[track_caller]
 pub(crate) fn region<D: PartialEq + 'static>(room: D, content: impl FnOnce()) {
     let screen = LOCAL_SCREEN.current();
-    rustle::skippable(room, move || {
+    rustle::kept(room, move || {
         if let Some(screen) = &screen {
             screen.0.with(|_| ());
         }

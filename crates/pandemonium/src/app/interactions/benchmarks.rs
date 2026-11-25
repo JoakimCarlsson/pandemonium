@@ -175,31 +175,109 @@ fn benchmark_interactions_scroll() {
     scroll.report("scroll under pointer");
 }
 
-/// Measures typing into the prompt, a character a frame.
+/// Measures typing into the prompt, a character a frame, on the heavy
+/// workspace and with a long prompt, a long conversation and both.
 #[test]
 #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_interactions -- --ignored --nocapture --test-threads=1"]
 fn benchmark_interactions_typing() {
-    let mut rig = heavy();
-    rig.click_on(Target::Composer(ComposerEvent::Prompt));
-    let mut typing = Samples::default();
-    for _ in 0..FRAMES {
-        typing.measure(&mut rig, |rig| rig.type_text("x"));
+    let cases: [(&str, pm_pages::WorkspaceState); 4] = [
+        ("type in the prompt", crate::snapshot::heavy_workspace()),
+        (
+            "type in a long prompt",
+            crate::snapshot::input_stress(true, false),
+        ),
+        (
+            "type beside a long chat",
+            crate::snapshot::input_stress(false, true),
+        ),
+        (
+            "type long prompt+chat",
+            crate::snapshot::input_stress(true, true),
+        ),
+    ];
+    for (name, state) in cases {
+        let mut rig = Rig::new(Screen::Workspace(state), SIZE);
+        rig.click_on(Target::Composer(ComposerEvent::Prompt));
+        let mut typing = Samples::default();
+        for _ in 0..FRAMES {
+            typing.measure(&mut rig, |rig| rig.type_text("x"));
+        }
+        typing.report(name);
     }
-    typing.report("type in the prompt");
 }
 
-/// Measures an agent streaming its reply, a chunk a frame.
+/// Measures an agent streaming its reply, a chunk a frame, on the heavy
+/// workspace, a long conversation and a long session of tool steps.
 #[test]
 #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_interactions -- --ignored --nocapture --test-threads=1"]
 fn benchmark_interactions_streaming() {
-    let mut rig = heavy();
-    let mut streaming = Samples::default();
-    for chunk in 0..FRAMES {
-        streaming.measure(&mut rig, |rig| {
-            rig.hear(pm_harness::Event::Said(format!(
-                "chunk {chunk} of **streamed** words and `code`. "
-            )));
-        });
+    let cases: [(&str, pm_pages::WorkspaceState); 3] = [
+        ("agent streaming", crate::snapshot::heavy_workspace()),
+        (
+            "streaming into long chat",
+            crate::snapshot::input_stress(false, true),
+        ),
+        (
+            "streaming into long session",
+            crate::snapshot::long_session(),
+        ),
+    ];
+    for (name, state) in cases {
+        let mut rig = Rig::new(Screen::Workspace(state), SIZE);
+        let mut streaming = Samples::default();
+        for chunk in 0..FRAMES {
+            streaming.measure(&mut rig, |rig| {
+                rig.hear(pm_harness::Event::Said(format!(
+                    "chunk {chunk} of **streamed** words and `code`. "
+                )));
+            });
+        }
+        streaming.report(name);
     }
-    streaming.report("agent streaming");
+}
+
+/// Scrolls the wheel over the middle of `rig`'s window: `frames` frames of
+/// `step` pixels down, then as many back up, measuring each, and reports
+/// under `name` with how many frames missed a 120 Hz display's 8.3 ms.
+fn scroll_through(rig: &mut Rig, name: &str, step: f32, frames: usize) {
+    rig.move_to((SIZE.0 / 2.0, SIZE.1 / 2.0));
+    let mut samples = Samples::default();
+    for frame in 0..2 * frames {
+        let down = if frame < frames { step } else { -step };
+        samples.measure(rig, |rig| rig.wheel(down));
+    }
+    let missed = samples
+        .total
+        .iter()
+        .filter(|ms| **ms > 1000.0 / 120.0)
+        .count();
+    eprintln!(
+        "{name:<28} missed 120 Hz on {missed} of {} frames",
+        samples.total.len()
+    );
+    samples.report(name);
+}
+
+/// A view to scroll: its name and the workspace that shows it.
+type View = (&'static str, fn() -> pm_pages::WorkspaceState);
+
+/// Scrolls each large view alone in the window, as a trackpad does in small
+/// steps and as a flick does in large ones: a 300-message session, a diff
+/// of 300 files and one of five thousand lines, a twenty-thousand-line file
+/// and an expanded tree of ten thousand rows.
+#[test]
+#[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_interactions -- --ignored --nocapture --test-threads=1"]
+fn benchmark_interactions_scroll_views() {
+    let views: [View; 5] = [
+        ("long session", crate::snapshot::long_session),
+        ("large diff", crate::snapshot::large_diff),
+        ("large code", crate::snapshot::large_code),
+        ("large tree", crate::snapshot::large_tree),
+        ("heavy workspace", crate::snapshot::heavy_workspace),
+    ];
+    for (view, state) in views {
+        let mut rig = Rig::new(Screen::Workspace(state()), SIZE);
+        scroll_through(&mut rig, &format!("{view} trackpad"), 8.0, 300);
+        scroll_through(&mut rig, &format!("{view} flick"), 400.0, 100);
+    }
 }

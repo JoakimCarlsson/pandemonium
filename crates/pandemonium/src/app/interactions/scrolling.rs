@@ -81,13 +81,15 @@ fn the_wheel_scrolls_the_conversation() {
 }
 
 /// A scroll of the conversation by the wheel reaches the screen through its observed scroll
-/// state, with no event of the app's own: the open session keeps how far back it is scrolled.
+/// state, with no event of the app's own, once the scroll rests: the open session keeps how
+/// far back it is scrolled.
 #[test]
 fn the_screen_follows_the_scrolled_conversation() {
     let mut rig = Rig::shot(Shot::Workspace);
     let at = middle(&rig);
     rig.move_to(at);
     rig.wheel(-100.0);
+    rig.wait(200);
     let kept = rig.state(|state| {
         state
             .open_index()

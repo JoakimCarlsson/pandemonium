@@ -507,10 +507,15 @@ fn every(interval: Option<Duration>, app: &Weak<RefCell<App>>, act: fn(&mut App)
     });
 }
 
+/// How long the lists must rest before the screen catches up with a scroll that was not
+/// urgent.
+const SCROLL_REST: Duration = Duration::from_millis(150);
+
 /// Follows the reader's scrolls of the lists the screen keeps up with, the diff's and the
 /// conversation's, by observing their scroll states: a block that reads how far both are
-/// scrolled, composed again alone when either moves, whose effect keyed on the offsets has
-/// the app catch the screen up with them.
+/// scrolled, composed again alone when either moves. Its effect keyed on the offsets has the
+/// app follow an urgent scroll at once, and its task keyed on them has the app catch the
+/// screen up once they rested, so a plain scroll writes the screen once, at its end.
 fn scroll_effects(shared: &Shared) {
     let lists = shared.model.read(Screen::followed_lists);
     let app = shared.app();
@@ -523,10 +528,13 @@ fn scroll_effects(shared: &Shared) {
         let scrolled = app.clone();
         rustle::disposable_effect(offsets, move || {
             with_app(&scrolled, |app| {
-                app.follow_scrolls();
+                app.follow_urgent_scrolls();
                 app.flush();
             });
             || {}
+        });
+        rested(Some(offsets), SCROLL_REST, &app, |app, _| {
+            app.follow_scrolls()
         });
     });
 }

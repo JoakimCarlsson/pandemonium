@@ -140,45 +140,43 @@ impl<'a> Markdown<'a> {
             Arrangement::SpacedBy(theme::sp(3)),
             Alignment::Start,
             || {
-                rustle::key(whole, || {
-                    rustle::skippable((whole, width.to_bits()), || {
-                        let blocks = pm_markdown::parse(self.source);
-                        let mut seen = 0;
-                        for block in &blocks {
-                            let first = seen;
-                            seen += count_details(std::slice::from_ref(block));
-                            let unfolded: Vec<usize> = self
-                                .unfolded
-                                .iter()
-                                .copied()
-                                .filter(|place| (first..seen).contains(place))
-                                .collect();
-                            let key = crate::figures::key_of((
-                                block,
-                                self.pixels,
-                                self.tone,
-                                self.details,
-                                first,
-                                &unfolded,
-                                self.links,
-                                &drawn,
-                            ));
-                            rustle::key(key, || {
-                                rustle::skippable((key, width.to_bits()), || {
-                                    Layout {
-                                        pixels: self.pixels,
-                                        details: self.details,
-                                        unfolded,
-                                        seen: first,
-                                        links: self.links,
-                                        figures: self.figures,
-                                        place: self.place,
-                                    }
-                                    .block(block, self.tone, width);
-                                });
+                rustle::skippable((whole, width.to_bits()), || {
+                    let blocks = pm_markdown::parse(self.source);
+                    let mut seen = 0;
+                    for block in &blocks {
+                        let first = seen;
+                        seen += count_details(std::slice::from_ref(block));
+                        let unfolded: Vec<usize> = self
+                            .unfolded
+                            .iter()
+                            .copied()
+                            .filter(|place| (first..seen).contains(place))
+                            .collect();
+                        let key = crate::figures::key_of((
+                            block,
+                            self.pixels,
+                            self.tone,
+                            self.details,
+                            first,
+                            &unfolded,
+                            self.links,
+                            &drawn,
+                        ));
+                        rustle::key(key, || {
+                            rustle::kept((key, width.to_bits()), || {
+                                Layout {
+                                    pixels: self.pixels,
+                                    details: self.details,
+                                    unfolded,
+                                    seen: first,
+                                    links: self.links,
+                                    figures: self.figures,
+                                    place: self.place,
+                                }
+                                .block(block, self.tone, width);
                             });
-                        }
-                    });
+                        });
+                    }
                 });
             },
         );

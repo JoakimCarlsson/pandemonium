@@ -89,6 +89,72 @@ while streaming, composing again every region that reads the whole screen;
 then measuring and painting the whole tree, which rustle
 caches only per restartable scope.
 
+## Scrolling large views and streaming
+
+`benchmark_interactions_scroll_views` scrolls each large view alone in the
+window, 300 frames of 8 pixels (a trackpad) and 100 of 400 (a flick) each
+way, and counts the frames over a 120 Hz display's 8.3 ms: a session of 300
+messages (`snapshot::long_session`), a diff of 300 files with one of 5,000
+added lines (`large_diff`), a highlighted file of 20,000 lines
+(`large_code`), the 10,000-row tree (`large_tree`) and the heavy workspace.
+`benchmark_interactions_typing` and `benchmark_interactions_streaming` also
+run on a long prompt, a long conversation and a long session. They run with
+the command above.
+
+The tests in `crates/pandemonium/src/app/interactions/scrolling_large.rs` run
+with the ordinary test suite and check the same views, plus the conversation of
+the heavy workspace, for correctness: they scroll each one frame by frame in
+small steps and in flicks, then to the far end and back. Every frame must keep
+the view covered in text with no blank stretch taller than 240 pixels. The text
+must move, the end must be reached, and the start must look as it did, each
+run within a pixel of where it was. A list places its items at fractions of a
+pixel from where its estimated end puts them, so a run can round to the next
+pixel once more items are measured; that was so before these changes too.
+
+What made these slow, found with a sampling profile of the benchmarks:
+
+- A composition local provided inside a skippable block (the selection
+  container of the conversation, every lazy list item) was checked against the
+  value outside it, so the block never skipped: every message and markdown
+  block was composed again for each streamed word. A provider now keeps the
+  reads of its own local from the blocks around it.
+- A lazy list read its scroll offset while composing, so every scrolled
+  pixel composed the pane holding it again. It now reads the offset untracked,
+  composes a quarter of a viewport beyond each end, and composes again only when the
+  viewport leaves what it composed. The code view follows its top row with
+  `rustle::watched_state_of`, which changes only when the row does.
+- Each scroll of the diff or the conversation wrote the screen, to remember
+  where it was, which composed every region again. A scroll is now followed at
+  once only when it must be (the diff is anchored to a file or has diffs to
+  read) and otherwise once the lists rest for 150 ms.
+- The diff worked out the rows of every file on each composition. Its rows
+  and items are kept until a file, a fold or a note changes, its syntax
+  colours with them, and each row is a `rustle::kept` block, whose layout is
+  kept while it is skipped.
+- Text set again searched the fonts for every run and shaped every word
+  again. The weights found are kept, and shaped words are kept by cosmic-text's
+  shape run cache, so a growing paragraph shapes only its new words.
+
+Measured on the same machine (release profile, milliseconds, p50 / p95 of the
+whole turn):
+
+| Interaction | Before | After |
+| --- | --- | --- |
+| Scroll the large diff, trackpad | 7.6 / 10.2 | 0.8 / 1.2 |
+| Scroll the large diff, flick | 10.1 / 16.2 | 2.9 / 6.1 |
+| Scroll the large file, trackpad | 2.9 / 6.0 | 1.6 / 5.7 |
+| Scroll the large file, flick | 4.6 / 7.8 | 4.3 / 7.5 |
+| Scroll the long session, trackpad | 0.2 / 1.8 | 0.3 / 0.5 |
+| Stream into the heavy workspace | 13.5 / 19.2 | 7.5 / 10.4 |
+| Stream into a long conversation | 9.9 / 18.2 | 4.7 / 8.1 |
+| Type beside a long conversation | 4.5 / 5.6 | 2.4 / 2.9 |
+
+What costs most now while streaming is laying out and painting the whole
+tree: the panes beside the conversation read the whole screen, so each
+streamed word composes and measures them again, and painting walks every node.
+The snapshot benchmarks below compose the screen from nothing each frame, so
+they measure a first frame, not the retained interface.
+
 ## Measure a running window
 
 ```sh

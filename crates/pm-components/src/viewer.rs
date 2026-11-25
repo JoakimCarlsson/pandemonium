@@ -1100,6 +1100,23 @@ pub fn viewer(state: &WorkspaceState, width: f32, height: f32) {
     }
 }
 
+/// The row of `viewer`'s file at the top of its view, as [`Viewer::top_row`] says, read so that
+/// the view composes again only when the scroll crosses a row, not on every pixel it moves:
+/// the sticky lines and the minimap follow it by rows.
+#[track_caller]
+fn top_in_rows(viewer: &Viewer, columns: Option<usize>, row: f32) -> f32 {
+    let scroll = viewer.scroll.clone();
+    let rows = row.max(1.0);
+    rustle::watched_state_of(move || {
+        (
+            scroll.first_visible_item(),
+            (scroll.first_visible_item_scroll_offset() / rows) as usize,
+        )
+    })
+    .get();
+    rustle::untracked(|| viewer.top_row(columns, row))
+}
+
 /// Emits the open file at `index`, in a view `width` by `height` logical pixels: the file shown, edited in place, or one shown in a pane other than the one being worked in, which a press on makes the file shown.
 #[track_caller]
 pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) {
@@ -1121,7 +1138,7 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
     let source = !shows_rendering(viewer);
     let shown_text = viewer.document().filter(|_| source);
     let (columns, row) = (state.wrap_columns(), state.editor.row_height());
-    let top = viewer.top_row(columns, row);
+    let top = top_in_rows(viewer, columns, row);
     let settings = pm_editor::EditorSettings {
         git_gutter: state.shows_gutter(),
         cursor_shape: shown_text.map_or(state.editor.cursor_shape, |document| {

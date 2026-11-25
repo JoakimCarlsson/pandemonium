@@ -739,6 +739,15 @@ impl App {
         }
     }
 
+    /// Follows a scroll at once only when it is urgent, as the root's observer of the
+    /// lists' scroll states asks on every move; the rest waits for the scroll to rest,
+    /// so scrolling writes no screen and composes nothing again.
+    pub(super) fn follow_urgent_scrolls(&mut self) {
+        if self.model.read(Screen::scroll_is_urgent) {
+            self.follow_scrolls();
+        }
+    }
+
     /// `at`, a point in the window, in the coordinates of the window's frame: past the band
     /// that holds the main window's shadow.
     pub(super) fn framed_point(&self, at: (f32, f32)) -> (f32, f32) {

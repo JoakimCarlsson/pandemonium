@@ -45,10 +45,8 @@ const CODE_PIXELS: f32 = 12.0;
 const CODE_CHARACTER: f32 = 0.6;
 
 /// A line of a diff with the number it has before the change and after it.
-#[derive(Clone, Copy)]
-struct Numbered<'a> {
-    /// The line.
-    line: &'a DiffLine,
+#[derive(Clone, Copy, PartialEq)]
+struct Numbered {
     /// Where it is in the diff.
     at: usize,
     /// Its number in the old file, if it is in it.
@@ -65,56 +63,48 @@ fn starts(header: &str) -> Option<(usize, usize)> {
 }
 
 /// The lines of `diff` with the numbers they have on each side, read out of the hunk headers.
-fn numbered(diff: &[DiffLine]) -> Vec<Numbered<'_>> {
+fn numbered(diff: &[DiffLine]) -> impl Iterator<Item = Numbered> + '_ {
     let (mut old, mut new) = (1, 1);
-    diff.iter()
-        .enumerate()
-        .map(|(at, line)| {
-            let (old_number, new_number) = match line.kind {
-                Kind::Hunk => {
-                    (old, new) = starts(&line.text).unwrap_or((old, new));
-                    (None, None)
-                }
-                Kind::Add => {
-                    new += 1;
-                    (None, Some(new - 1))
-                }
-                Kind::Remove => {
-                    old += 1;
-                    (Some(old - 1), None)
-                }
-                Kind::Context => {
-                    old += 1;
-                    new += 1;
-                    (Some(old - 1), Some(new - 1))
-                }
-            };
-            Numbered {
-                line,
-                at,
-                old: old_number,
-                new: new_number,
+    diff.iter().enumerate().map(move |(at, line)| {
+        let (old_number, new_number) = match line.kind {
+            Kind::Hunk => {
+                (old, new) = starts(&line.text).unwrap_or((old, new));
+                (None, None)
             }
-        })
-        .collect()
+            Kind::Add => {
+                new += 1;
+                (None, Some(new - 1))
+            }
+            Kind::Remove => {
+                old += 1;
+                (Some(old - 1), None)
+            }
+            Kind::Context => {
+                old += 1;
+                new += 1;
+                (Some(old - 1), Some(new - 1))
+            }
+        };
+        Numbered {
+            at,
+            old: old_number,
+            new: new_number,
+        }
+    })
 }
 
-/// One row of a diff as it is shown.
-enum Row<'a> {
-    /// The header of a stretch of changes.
-    Hunk(&'a str),
+/// One row of a diff as it is shown, its lines named by where they are in the diff.
+enum Row {
+    /// The header of a stretch of changes, at this position in the diff.
+    Hunk(usize),
     /// The old line and the new line that stand side by side, either of which may be missing.
-    Pair(Option<Numbered<'a>>, Option<Numbered<'a>>),
+    Pair(Option<Numbered>, Option<Numbered>),
 }
 
 /// Moves the runs of removed and added lines into `rows`, the first of each beside the first of the other, leaving a blank where one run is shorter.
-fn pair_runs<'a>(
-    rows: &mut Vec<Row<'a>>,
-    removed: &mut Vec<Numbered<'a>>,
-    added: &mut Vec<Numbered<'a>>,
-) {
-    let mut old = std::mem::take(removed).into_iter();
-    let mut new = std::mem::take(added).into_iter();
+fn pair_runs(rows: &mut Vec<Row>, removed: &mut Vec<Numbered>, added: &mut Vec<Numbered>) {
+    let mut old = removed.drain(..);
+    let mut new = added.drain(..);
     loop {
         match (old.next(), new.next()) {
             (None, None) => break,
@@ -124,15 +114,15 @@ fn pair_runs<'a>(
 }
 
 /// The rows of `change`: the removed and added runs lined up beside each other, context on both sides.
-fn rows(change: &Change) -> Vec<Row<'_>> {
+fn rows(change: &Change) -> Vec<Row> {
     let mut rows = Vec::new();
     let mut removed: Vec<Numbered> = Vec::new();
     let mut added: Vec<Numbered> = Vec::new();
     for entry in numbered(&change.diff) {
-        match entry.line.kind {
+        match change.diff[entry.at].kind {
             Kind::Hunk => {
                 pair_runs(&mut rows, &mut removed, &mut added);
-                rows.push(Row::Hunk(&entry.line.text));
+                rows.push(Row::Hunk(entry.at));
             }
             Kind::Remove => removed.push(entry),
             Kind::Add => added.push(entry),
@@ -332,10 +322,12 @@ fn code(content: &str, marks: Vec<Mark>, columns: usize) {
     );
 }
 
-/// Emits one half of a row: the line that is on that side, coloured as `colours` says, or a blank where there is none, lit while it is among the lines being commented on.
+/// Emits one half of a row: the line of `diff` that is on that side, coloured as `colours` says, or a blank where there is none, lit while it is among the lines being commented on.
 #[track_caller]
+#[allow(clippy::too_many_arguments)]
 fn half(
     entry: Option<&Numbered>,
+    diff: &[DiffLine],
     colours: &DiffColours,
     change: usize,
     new: bool,
@@ -346,8 +338,8 @@ fn half(
     let (number, kind, content, marks) = match entry {
         Some(entry) => (
             if new { entry.new } else { entry.old },
-            Some(entry.line.kind),
-            entry.line.text.as_str(),
+            Some(diff[entry.at].kind),
+            diff[entry.at].text.as_str(),
             colours.line(entry.at),
         ),
         None => (None, None, "", Vec::new()),
@@ -408,30 +400,31 @@ fn hunk_row(header: &str) {
     );
 }
 
-/// How many lines of `columns` characters `row` takes.
-fn row_height(row: &Row, columns: usize) -> usize {
+/// How many lines of `columns` characters `row`, a row of `diff`, takes.
+fn row_height(row: &Row, diff: &[DiffLine], columns: usize) -> usize {
     match row {
         Row::Hunk(_) => 1,
         Row::Pair(old, new) => [old, new]
             .into_iter()
             .flatten()
-            .map(|entry| lines_of(&entry.line.text, columns))
+            .map(|entry| lines_of(&diff[entry.at].text, columns))
             .max()
             .unwrap_or(1),
     }
 }
 
-/// Emits a diff row of the change at `change`, its code coloured as `colours` says.
+/// Emits a row of `diff`, the diff of the change at `change`, its code coloured as `colours` says.
 fn diff_row(
     row_of: &Row,
+    diff: &[DiffLine],
     colours: &DiffColours,
     change: usize,
     selected: Option<Range>,
     columns: usize,
 ) {
-    let lines = row_height(row_of, columns);
+    let lines = row_height(row_of, diff, columns);
     match row_of {
-        Row::Hunk(header) => hunk_row(header),
+        Row::Hunk(at) => hunk_row(&diff[*at].text),
         Row::Pair(old, new) => rustle::row_arranged(
             Modifier::new()
                 .fill_max_width()
@@ -442,6 +435,7 @@ fn diff_row(
                 for (entry, new) in [(old, false), (new, true)] {
                     half(
                         entry.as_ref(),
+                        diff,
                         colours,
                         change,
                         new,
@@ -741,7 +735,7 @@ fn notes_on<'a>(session: &'a Session, change: &Change) -> Vec<(usize, &'a Commen
 }
 
 /// The rows of each file of `session` that is shown unfolded with its diff read; none for the others.
-fn shown_rows<'a>(state: &WorkspaceState, session: &'a Session) -> Vec<Vec<Row<'a>>> {
+fn shown_rows(state: &WorkspaceState, session: &Session) -> Vec<Vec<Row>> {
     session
         .changes
         .iter()
@@ -830,18 +824,97 @@ pub(crate) fn item_files(state: &WorkspaceState, session: &Session) -> Vec<usize
         .collect()
 }
 
+/// The rows and items of a diff, worked out from every changed file, kept between compositions.
+struct Layout {
+    /// Tells this layout apart from every other one made while the program runs.
+    id: u64,
+    /// The shown rows of each file.
+    rows: Vec<Vec<Row>>,
+    /// The items of the list.
+    items: Vec<Item>,
+    /// A hash of each file's path, which keys its items in the list without hashing the path for each.
+    file_keys: Vec<u64>,
+    /// The colours of the code of each file whose rows were drawn, by its index, with the
+    /// key of the theme and the word marking they were worked out for.
+    colours: std::cell::RefCell<(u64, std::collections::HashMap<usize, DiffColours>)>,
+}
+
+/// What a diff's [`Layout`] is worked out from, compared to tell whether the one kept still holds: each file's path, its diff by where its lines are held, how many there are and what its first and last say, whether it is read and whether it is folded, the session's notes and what a comment is being started on.
+#[derive(PartialEq)]
+struct LayoutKey {
+    /// Per file: a hash of its path, a hash of where its lines are held, how many there are and its first and last, whether read, whether folded.
+    files: Vec<(u64, u64, bool, bool)>,
+    /// The session's notes.
+    comments: Vec<Comment>,
+    /// What a comment is being started on.
+    target: Option<CommentTarget>,
+}
+
+/// A hash of `path`.
+fn path_key(path: &str) -> u64 {
+    crate::figures::key_of(path)
+}
+
+/// A hash of `diff` that changes when the diff is replaced, without reading every line: where its lines are held, how many there are, and the text of the first and the last.
+fn diff_key(diff: &[DiffLine]) -> u64 {
+    crate::figures::key_of((
+        diff.as_ptr() as usize,
+        diff.len(),
+        diff.first().map(|line| &line.text),
+        diff.last().map(|line| &line.text),
+    ))
+}
+
+impl LayoutKey {
+    /// The key of the diff of `session` as `state` shows it.
+    fn of(state: &WorkspaceState, session: &Session) -> Self {
+        Self {
+            files: session
+                .changes
+                .iter()
+                .map(|change| {
+                    (
+                        path_key(&change.path),
+                        diff_key(&change.diff),
+                        change.loaded,
+                        state.closed_diffs.contains(&change.path),
+                    )
+                })
+                .collect(),
+            comments: session.comments.clone(),
+            target: state.comment_target,
+        }
+    }
+}
+
+/// The layout of the diff of `session` as `state` shows it, worked out again only when its [`LayoutKey`] changed, so a composition for a scroll or another region's change walks no file's lines.
+#[track_caller]
+fn layout(state: &WorkspaceState, session: &Session) -> std::rc::Rc<Layout> {
+    let key = LayoutKey::of(state, session);
+    let file_keys = key.files.iter().map(|file| file.0).collect();
+    rustle::memo(key, || {
+        static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let rows = shown_rows(state, session);
+        std::rc::Rc::new(Layout {
+            id: MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            items: items(state, session, &rows),
+            rows,
+            file_keys,
+            colours: std::cell::RefCell::default(),
+        })
+    })
+}
+
 /// What the items of the diff are drawn from while the diff composes.
 struct Shown<'a> {
     /// The workspace.
     state: &'a WorkspaceState,
     /// The session whose diff it is.
     session: &'a Session,
-    /// The items of the list.
-    items: Vec<Item>,
-    /// The shown rows of each file.
-    rows: Vec<Vec<Row<'a>>>,
-    /// The colours of the code of each file whose rows were drawn, worked out once per composition.
-    colours: std::cell::RefCell<std::collections::HashMap<usize, DiffColours>>,
+    /// The rows and items.
+    layout: std::rc::Rc<Layout>,
+    /// A key of the theme and whether changed words are marked, which the colours kept in the layout must have been worked out for.
+    colour_key: u64,
     /// How many characters of code one side of a row holds on a line.
     columns: usize,
 }
@@ -849,15 +922,16 @@ struct Shown<'a> {
 impl Shown<'_> {
     /// Whether the item at `at` is the last of its file.
     fn last_of_file(&self, at: usize) -> bool {
-        self.items
+        let items = &self.layout.items;
+        items
             .get(at + 1)
-            .is_none_or(|next| next.file() != self.items[at].file())
+            .is_none_or(|next| next.file() != items[at].file())
     }
 
     /// Emits the item at `at` in the frame of its file.
     #[track_caller]
     fn item(&self, at: usize) {
-        let item = self.items[at];
+        let item = self.layout.items[at];
         framed(
             matches!(item, Item::Header(_)),
             self.last_of_file(at),
@@ -898,23 +972,38 @@ impl Shown<'_> {
             Item::FileNote(_, nth) => comment_card(nth, comment(nth)),
             Item::Note(_, nth) => comment_card(nth, comment(nth)),
             Item::Row(_, position) => {
-                let mut cache = self.colours.borrow_mut();
-                let colours = cache.entry(index).or_insert_with(|| {
-                    let colours =
-                        DiffColours::of(&change.diff, file_language(&change.path).as_deref());
-                    if self.state.window.git.word_diff {
-                        colours.with_words(&change.diff, &change.words)
-                    } else {
-                        colours
-                    }
-                });
-                diff_row(
-                    &self.rows[index][position],
-                    colours,
+                let selected = target.and_then(|target| target.range);
+                let inputs = (
+                    self.layout.id,
                     index,
-                    target.and_then(|target| target.range),
+                    position,
                     self.columns,
+                    self.colour_key,
+                    selected,
                 );
+                rustle::kept(inputs, || {
+                    let mut kept = self.layout.colours.borrow_mut();
+                    if kept.0 != self.colour_key {
+                        *kept = (self.colour_key, std::collections::HashMap::new());
+                    }
+                    let colours = kept.1.entry(index).or_insert_with(|| {
+                        let colours =
+                            DiffColours::of(&change.diff, file_language(&change.path).as_deref());
+                        if self.state.window.git.word_diff {
+                            colours.with_words(&change.diff, &change.words)
+                        } else {
+                            colours
+                        }
+                    });
+                    diff_row(
+                        &self.layout.rows[index][position],
+                        &change.diff,
+                        colours,
+                        index,
+                        selected,
+                        self.columns,
+                    );
+                });
             }
         }
     }
@@ -1010,13 +1099,11 @@ fn summary(session: &Session) {
 /// Emits the diff of `session` in a view `width` logical pixels wide: a summary strip, then a lazy list of the parts of each changed file, of which only those in or near the view are composed.
 #[track_caller]
 pub fn diff(state: &WorkspaceState, session: &Session, width: f32) {
-    let rows = shown_rows(state, session);
     let shown = Shown {
         state,
         session,
-        items: items(state, session, &rows),
-        rows,
-        colours: std::cell::RefCell::default(),
+        layout: layout(state, session),
+        colour_key: crate::figures::key_of((theme::theme(), state.window.git.word_diff)),
         columns: columns(width),
     };
     rustle::column_arranged(
@@ -1032,10 +1119,10 @@ pub fn diff(state: &WorkspaceState, session: &Session, width: f32) {
                     .fill_max_width(),
                 &state.diff_list,
                 rustle::LazyContent::new().padding_each(0.0, theme::sp(4)),
-                shown.items.len(),
+                shown.layout.items.len(),
                 |at| {
-                    let item = shown.items[at];
-                    (session.changes[item.file()].path.as_str(), item)
+                    let item = shown.layout.items[at];
+                    (shown.layout.file_keys[item.file()], item)
                 },
                 |at| shown.item(at),
             );

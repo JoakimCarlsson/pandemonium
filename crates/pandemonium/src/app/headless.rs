@@ -782,6 +782,11 @@ impl Rig {
         self.text_at(None, words).is_some()
     }
 
+    /// What the last frame of the main window drew, in its outer logical pixels.
+    pub(super) fn commands(&self) -> std::borrow::Cow<'_, [rustle::DrawCommand]> {
+        self.screens.main.commands()
+    }
+
     /// Reads the workspace through `read`.
     pub(super) fn state<T>(&self, read: impl FnOnce(&WorkspaceState) -> T) -> T {
         self.read(|state| read(state))

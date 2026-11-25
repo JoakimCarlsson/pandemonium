@@ -2656,7 +2656,7 @@ fn files() -> WorkspaceState {
 }
 
 /// The independent prompt and conversation sizes used by typing benchmarks and render fixtures.
-fn input_stress(long_prompt: bool, long_chat: bool) -> WorkspaceState {
+pub(crate) fn input_stress(long_prompt: bool, long_chat: bool) -> WorkspaceState {
     let mut state = workspace_sample();
     state.review = false;
     let prompt = if long_prompt {
@@ -2719,6 +2719,85 @@ pub(crate) fn heavy_workspace() -> WorkspaceState {
         .chain((0..20).map(|index| format!("src/module-{index:02}")))
         .collect();
     state
+}
+
+/// A long session for measuring scrolling: the conversation alone in the
+/// window, its sample turns, with their tool steps, repeated to 300 messages.
+#[cfg(test)]
+pub(crate) fn long_session() -> WorkspaceState {
+    let mut state = workspace_sample().handle(Event::Chat(ChatEvent::TabChat));
+    state.review = false;
+    let turns = state.sessions[0].messages.clone();
+    state.sessions[0].messages = turns.iter().cycle().take(300).cloned().collect();
+    state
+}
+
+/// A session with many changes for measuring scrolling: the diff alone in the
+/// window over 300 files of four hunks each, the 150th replaced by one of five
+/// thousand added lines.
+#[cfg(test)]
+pub(crate) fn large_diff() -> WorkspaceState {
+    let mut state = workspace_sample().handle(Event::Diff(DiffEvent::TabDiff));
+    state.review = false;
+    let hunk = |start: usize| {
+        std::iter::once(format!("@@ -{start},15 +{start},18 @@ impl Session {{"))
+            .chain((0..5).map(|line| format!("     let kept_{line} = self.value({line});")))
+            .chain((0..5).map(|line| format!("-    let old_{line} = compute(&kept_{line}, {line});")))
+            .chain((0..8).map(|line| format!("+    let new_{line} = compute_faster(&kept_{line}, {line}).unwrap_or_default();")))
+            .chain((0..5).map(|line| format!("     trace!(\"step {line}\");")))
+            .collect::<Vec<_>>()
+    };
+    state.sessions[0].changes = (0..300)
+        .map(|file| {
+            let path = format!("src/module-{:02}/file-{file:03}.rs", file / 20);
+            let source = if file == 150 {
+                std::iter::once("@@ -0,0 +1,5000 @@".to_owned())
+                    .chain((1..=5000).map(|line| format!("+    let value_{line} = {line};")))
+                    .collect::<Vec<_>>()
+            } else {
+                (0..4).flat_map(|at| hunk(at * 40 + 1)).collect()
+            };
+            pm_components::sample::Change::new(&path, &source.join("\n"))
+        })
+        .collect();
+    state
+}
+
+/// A large file for measuring scrolling: a Rust file of twenty thousand
+/// lines open alone in the window, highlighted, with every fiftieth line
+/// changed against its base.
+#[cfg(test)]
+pub(crate) fn large_code() -> WorkspaceState {
+    let line = |index: usize, changed: bool| {
+        let call = if changed { "compute_faster" } else { "compute" };
+        match index % 5 {
+            0 => format!("/// Returns the value of step {index}, with **care**.\n"),
+            1 => format!("pub fn step_{index}(input: &[u32]) -> Option<u32> {{\n"),
+            2 => format!("    let total: u32 = input.iter().map(|v| {call}(*v, {index})).sum();\n"),
+            3 => "    Some(total)\n".to_owned(),
+            _ => "}\n".to_owned(),
+        }
+    };
+    let text: String = (0..20_000)
+        .map(|index| line(index, index % 50 == 2))
+        .collect();
+    let base: String = (0..20_000).map(|index| line(index, false)).collect();
+    let mut state = code();
+    state.review = false;
+    state
+        .with_file(
+            0,
+            CODE_PATH,
+            false,
+            Ok((Some(text), false, Some("rust".to_owned()))),
+        )
+        .with_base(0, CODE_PATH, Some(base))
+}
+
+/// The large expanded tree of [`large_files`], for measuring scrolling.
+#[cfg(test)]
+pub(crate) fn large_tree() -> WorkspaceState {
+    large_files(false)
 }
 
 /// A large expanded tree with stable names, optionally scrolled halfway down.

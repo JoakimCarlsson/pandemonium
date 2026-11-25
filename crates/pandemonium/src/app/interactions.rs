@@ -36,6 +36,7 @@ mod pauses;
 mod pointer;
 mod popups;
 mod scrolling;
+mod scrolling_large;
 mod selection;
 mod smoke;
 mod terminal;

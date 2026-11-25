@@ -202,6 +202,14 @@ impl Screen {
         state.scrolls_moved()
     }
 
+    /// Whether a scroll since the screen last looked must be followed at once, not
+    /// once scrolling rests: the diff moved while it is anchored to a file or has
+    /// diffs still to be read.
+    pub fn scroll_is_urgent(&self) -> bool {
+        let Self::Workspace(state) = self;
+        state.scroll_is_urgent()
+    }
+
     /// Catches the screen up with what the reader scrolled, and says whether
     /// the diff moved, so the diffs that came into view can be asked for.
     pub fn follow_scrolls(&mut self) -> bool {

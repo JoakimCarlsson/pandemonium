@@ -52,8 +52,8 @@ fn rows_seen(laid: &[Tagged]) -> Vec<(Target, f32)> {
         .collect()
 }
 
-/// The list composes only the rows near its view, each a row's height under the one before,
-/// wherever it is scrolled to, at every density.
+/// The list composes only the rows near its view, and a quarter of a view beyond each end of it, each a
+/// row's height under the one before, wherever it is scrolled to, at every density.
 #[test]
 fn the_list_composes_only_rows_in_view_at_their_places() {
     for scale in [1.0, 0.8] {
@@ -68,7 +68,7 @@ fn the_list_composes_only_rows_in_view_at_their_places() {
                 .filter(|node| matches!(node.id, Target::Tree(TreeEvent::TreeFile(_))))
                 .count();
             assert!(
-                composed <= (240.0 / height).ceil() as usize + 4,
+                composed <= (1.5 * 240.0 / height).ceil() as usize + 4,
                 "only rows near the view are composed: {composed}, scale={scale}, first={first}"
             );
             let seen = rows_seen(&laid);

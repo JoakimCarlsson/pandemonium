@@ -799,7 +799,7 @@ fn message(state: &WorkspaceState, session: &Session, index: usize, width: f32) 
             second,
         ),
     };
-    rustle::skippable(inputs, || {
+    rustle::kept(inputs, || {
         if message.from_user {
             user_message(state, session, index, width)
         } else {

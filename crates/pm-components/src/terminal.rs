@@ -348,7 +348,7 @@ fn window(tab: &TerminalTab, width: f32, look: Look) {
         Alignment::Start,
         move || {
             rustle::key(key, || {
-                rustle::skippable((key, width.to_bits()), || {
+                rustle::kept((key, width.to_bits()), || {
                     lines(&emulator.read(), back, &composing, link.as_ref(), look);
                 });
             });
