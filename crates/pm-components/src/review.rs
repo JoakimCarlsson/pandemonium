@@ -452,11 +452,17 @@ fn repositories(state: &WorkspaceState, session: &Session) {
         || {
             rustle::row_arranged(
                 Modifier::new()
+                    .fill_max_width()
                     .height(theme::sp(7))
                     .padding_xy(theme::sp(2), 0.0),
                 Arrangement::Start,
                 Alignment::Center,
-                || line("Repositories", 12, 1.4, Role::Subtle),
+                || {
+                    line("Repositories", 12, 1.4, Role::Subtle);
+                    if overview(state) {
+                        remote_controls(state, session);
+                    }
+                },
             );
             for (place, repository) in repositories.iter().enumerate() {
                 if state.git.folder && repository.is_none() {
@@ -467,7 +473,19 @@ fn repositories(state: &WorkspaceState, session: &Session) {
                     .iter()
                     .filter(|change| change.is_listed_in(repository.as_deref()))
                     .count();
-                let head = state.head_of(repository.as_deref()).unwrap_or_default();
+                let head = state
+                    .git
+                    .folder
+                    .then(|| {
+                        session
+                            .standings
+                            .iter()
+                            .find(|standing| Some(&standing.path) == repository.as_ref())
+                            .map(change_list::standing_label)
+                    })
+                    .flatten()
+                    .or_else(|| state.head_of(repository.as_deref()))
+                    .unwrap_or_default();
                 let picked = state.git.repository == *repository;
                 let target = if state.git.folder && picked { 0 } else { place };
                 let depth = depth(repository) - usize::from(state.git.folder);
@@ -516,6 +534,43 @@ fn repositories(state: &WorkspaceState, session: &Session) {
                     });
             }
         },
+    );
+}
+
+/// Emits, against the end of the heading of a folder of repositories, how many commits its repositories have to pull and to push in all, and the buttons that fetch, pull and push every one of them.
+fn remote_controls(state: &WorkspaceState, session: &Session) {
+    let (behind, ahead) = session
+        .standings
+        .iter()
+        .fold((0, 0), |(behind, ahead), standing| {
+            (
+                behind + standing.tracking.behind,
+                ahead + standing.tracking.ahead,
+            )
+        });
+    spacer();
+    if behind > 0 {
+        line(format!("↓{behind}"), 11, 1.4, Role::Subtle);
+    }
+    if ahead > 0 {
+        line(format!("↑{ahead}"), 11, 1.4, Role::Subtle);
+    }
+    for (icon, event, tip) in [
+        (
+            phosphor::CLOUD_ARROW_DOWN,
+            GitEvent::GraphFetch,
+            "Fetch All",
+        ),
+        (phosphor::ARROW_LINE_DOWN, GitEvent::GraphPull, "Pull All"),
+        (phosphor::ARROW_LINE_UP, GitEvent::GraphPush, "Push All"),
+    ] {
+        small_icon_button(icon, Target::Git(event), false, tip);
+    }
+    small_icon_button(
+        phosphor::ARROWS_CLOCKWISE,
+        Target::Git(GitEvent::ChangesRefresh),
+        state.git.working,
+        "Refresh",
     );
 }
 

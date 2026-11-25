@@ -340,7 +340,7 @@ fn file_row(state: &WorkspaceState, change: &Change, index: usize, name: &str, d
 }
 
 /// What the branch of the repository `standing` says stands as is written: its name, or the commit on a detached head, and how many commits it is ahead of and behind what it follows.
-fn standing_label(standing: &pm_git::Standing) -> String {
+pub(crate) fn standing_label(standing: &pm_git::Standing) -> String {
     let mut label = match (&standing.branch, &standing.head) {
         (Some(branch), _) => branch.clone(),
         (None, Some(head)) => format!("@ {head}"),
