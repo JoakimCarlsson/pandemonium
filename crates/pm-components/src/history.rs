@@ -69,8 +69,8 @@ pub struct HistoryState {
     rows: Vec<HistoryRow>,
     /// The search box.
     search: TextFieldState,
-    /// How far the groups are scrolled.
-    scroll: rustle::ScrollState,
+    /// The lazy list of the groups and rows: how far it is scrolled and how tall its items are.
+    scroll: rustle::LazyListState,
 }
 
 impl HistoryState {
@@ -106,7 +106,37 @@ impl HistoryState {
     }
 }
 
-/// Emits the history page `view` describes.
+/// One item of the history page's lazy list.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Item {
+    /// The heading of the group of `Span`, the first of the page when it is.
+    Heading(Span, bool),
+    /// The row at this place among the rows.
+    Row(usize),
+}
+
+/// The items of the history page for `rows`, from the top: each group that has rows, its
+/// heading over them.
+fn items(rows: &[HistoryRow]) -> Vec<Item> {
+    let mut items = Vec::new();
+    for span in Span::ALL {
+        let first = items.is_empty();
+        let mut members = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.span == span)
+            .peekable();
+        if members.peek().is_none() {
+            continue;
+        }
+        items.push(Item::Heading(span, first));
+        items.extend(members.map(|(place, _)| Item::Row(place)));
+    }
+    items
+}
+
+/// Emits the history page `view` describes, its groups and rows a lazy list that composes
+/// only the items in view.
 #[track_caller]
 pub fn history(view: &HistoryState) {
     rustle::column_arranged(
@@ -116,19 +146,28 @@ pub fn history(view: &HistoryState) {
         || {
             heading();
             search(&view.search);
-            rustle::column_arranged(
-                Modifier::new()
-                    .fill_max_width()
-                    .weight(1.0)
-                    .vertical_scroll(&view.scroll)
-                    .fill_max_width()
-                    .padding_xy(theme::sp(5), 0.0),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    for span in Span::ALL {
-                        group(span, &view.rows);
-                    }
+            let items = items(&view.rows);
+            rustle::lazy_list_with(
+                Modifier::new().fill_max_width().weight(1.0),
+                &view.scroll,
+                rustle::LazyContent::new().spacing(theme::sp(0.5)),
+                items.len(),
+                |index| match items[index] {
+                    Item::Heading(span, _) => (0, span.title().to_owned()),
+                    Item::Row(place) => (1, view.rows[place].index.to_string()),
+                },
+                |index| {
+                    rustle::column_arranged(
+                        Modifier::new()
+                            .fill_max_width()
+                            .padding_xy(theme::sp(5), 0.0),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || match items[index] {
+                            Item::Heading(span, first) => group_heading(span, first),
+                            Item::Row(place) => row_of(&view.rows[place]),
+                        },
+                    );
                 },
             );
         },
@@ -206,38 +245,25 @@ fn searchable(state: &WorkspaceState, index: usize) -> String {
     .to_lowercase()
 }
 
-/// Emits the heading and rows of `span`, when one of `rows` falls in it.
+/// Emits the heading of the group of `span`, set off from the group above it, or from the
+/// top of the list when it is the `first`.
 #[track_caller]
-fn group(span: Span, rows: &[HistoryRow]) {
-    let members: Vec<&HistoryRow> = rows.iter().filter(|row| row.span == span).collect();
-    if members.is_empty() {
-        return;
-    }
-    rustle::column_arranged(
+fn group_heading(span: Span, first: bool) {
+    let above = if first { 5.0 } else { 4.5 };
+    rustle::row_arranged(
         Modifier::new()
-            .fill_max_width()
-            .padding_each(0.0, theme::sp(5), 0.0, 0.0),
-        Arrangement::SpacedBy(theme::sp(0.5)),
-        Alignment::Start,
+            .padding_each(0.0, theme::sp(above), 0.0, 0.0)
+            .height(theme::sp(8))
+            .padding_xy(theme::sp(3), 0.0),
+        Arrangement::Start,
+        Alignment::Center,
         || {
-            rustle::row_arranged(
-                Modifier::new()
-                    .height(theme::sp(8))
-                    .padding_xy(theme::sp(3), 0.0),
-                Arrangement::Start,
-                Alignment::Center,
-                || {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        span.title(),
-                        theme::strong(14, Role::Text),
-                        TextOverflow::Ellipsis,
-                    );
-                },
+            rustle::basic_text(
+                Modifier::new(),
+                span.title(),
+                theme::strong(14, Role::Text),
+                TextOverflow::Ellipsis,
             );
-            for row in members {
-                rustle::key(row.index, || row_of(row));
-            }
         },
     );
 }

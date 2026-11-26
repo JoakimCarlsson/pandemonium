@@ -1,7 +1,6 @@
 //! Changing a document's text: the syntax tree reparsed, the version the language server was told of moved on, and the completions open at the caret kept in step.
 
 use crate::Edit;
-use pm_buffer::Lines;
 use pm_protocol::TextChange;
 
 use crate::document::{Completions, Document};
@@ -26,12 +25,10 @@ impl Document {
         if self.linked.is_none() {
             self.snippet = None;
         }
-        let before = self.field.text().to_owned();
-        let before_lines: Lines = self.line_index().clone();
         let caret_line = self.line_of(self.field.caret());
         let carets = self.field.selections();
         self.field.apply(edit);
-        let Some(change) = self.refresh(&before, &before_lines) else {
+        let Some((change, text_change)) = self.settle_edit() else {
             if self.field.selections() != carets {
                 self.note_cursor_move(carets);
             }
@@ -51,10 +48,7 @@ impl Document {
             .flatten();
         let told = self.synced.then(|| {
             self.version += 1;
-            (
-                self.version,
-                Document::text_change(&change, &before, &before_lines),
-            )
+            (self.version, text_change)
         });
         let trigger =
             typed.filter(|character| self.triggers.iter().any(|held| held.ends_with(*character)));

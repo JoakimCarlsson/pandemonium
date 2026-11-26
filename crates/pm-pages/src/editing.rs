@@ -68,6 +68,18 @@ impl Screen {
         }
     }
 
+    /// Whether the editor's settings are in and differ from `saved`, compared in place without
+    /// copying them.
+    pub fn editor_settings_differ(&self, saved: &pm_editor::EditorSettings) -> bool {
+        matches!(self, Self::Workspace(state) if state.editor_loaded && state.editor != *saved)
+    }
+
+    /// Whether the window's own settings are in and differ from `saved`, compared in place
+    /// without copying them.
+    pub fn window_settings_differ(&self, saved: &pm_config::WindowSettings) -> bool {
+        matches!(self, Self::Workspace(state) if state.window_loaded && state.window != *saved)
+    }
+
     /// Whether the window is to close: the reader asked to and nothing is left to ask first.
     pub fn quitting(&self) -> bool {
         self.workspace_is(|state| state.quitting)

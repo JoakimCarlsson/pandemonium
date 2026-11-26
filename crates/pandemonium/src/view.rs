@@ -438,7 +438,7 @@ impl View {
             files_tab: state.review_tab == ReviewTab::Files,
             open_tree: sorted(&state.open_tree),
             closed_folders: sorted(&state.closed_folders),
-            tree_scroll: state.tree_scroll.offset(),
+            tree_scroll: state.tree_scroll.scroll().offset(),
             files_first_row: state.files_list.first_visible_item().unwrap_or(0),
             diff_scroll: state.diff_list.scroll().offset(),
             changes_open: state.git.changes_open,
@@ -456,7 +456,7 @@ impl View {
             review_width: state.sizes.review_width.get(),
             plan_width: state.sizes.plan_width.get(),
             terminal: state.terminal,
-            scroll: state.sidebar_scroll.offset(),
+            scroll: state.sidebar_scroll.scroll().offset(),
             agent: state.agent,
             prompt: state.prompt.text().to_owned(),
             typing,
@@ -587,8 +587,8 @@ impl View {
             state.git.graph_height.set(self.graph_height);
         }
         state.review_tab = self.review_tab();
-        state.sidebar_scroll.jump_to(self.scroll);
-        state.tree_scroll.jump_to(self.tree_scroll);
+        state.sidebar_scroll.scroll().jump_to(self.scroll);
+        state.tree_scroll.scroll().jump_to(self.tree_scroll);
         state
             .files_list
             .scroll_to_item_offset(self.files_first_row, 0.0);
@@ -722,12 +722,12 @@ mod tests {
     #[test]
     fn the_sidebar_keeps_its_place() {
         let state = WorkspaceState::sample();
-        state.sidebar_scroll.jump_to(84.0);
+        state.sidebar_scroll.scroll().jump_to(84.0);
         let view = View::capture(&state, None, |index| Some((None, index as u64 + 1)));
         let text = serde_json::to_value(&view).unwrap();
         assert_eq!(text["scroll"], serde_json::json!(84.0));
         let restored: View = serde_json::from_value(text).unwrap();
         let reopened = restored.reopen(restored.apply(WorkspaceState::sample()), Some(0));
-        assert_eq!(reopened.sidebar_scroll.offset(), 84.0);
+        assert_eq!(reopened.sidebar_scroll.scroll().offset(), 84.0);
     }
 }

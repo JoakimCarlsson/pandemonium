@@ -2374,9 +2374,56 @@ impl Work {
                 continue;
             };
             let items = client.incoming();
-            self.unheard
-                .extend(items.into_iter().map(|item| (host.clone(), item)));
+            for item in items {
+                self.queue_heard(host.clone(), item);
+            }
         }
+    }
+
+    /// Puts `item`, reported by the server on `host`, at the end of the queue of what the
+    /// window has yet to act on. Words the agent of a session said live, right after other
+    /// live words of the same session still queued, are added to those, so a burst of
+    /// streamed text is taken into the screen as one change.
+    fn queue_heard(&mut self, host: Host, item: Incoming) {
+        if let Incoming::Event {
+            session,
+            seq,
+            event: HarnessEvent::Said(text),
+        } = item
+        {
+            let heard_up_to = self
+                .history
+                .get(&(host.clone(), session))
+                .copied()
+                .unwrap_or(0);
+            if let Some((
+                last_host,
+                Incoming::Event {
+                    session: last_session,
+                    seq: last_seq,
+                    event: HarnessEvent::Said(said),
+                },
+            )) = self.unheard.back_mut()
+                && *last_host == host
+                && *last_session == session
+                && *last_seq > heard_up_to
+                && seq > *last_seq
+            {
+                said.push_str(&text);
+                *last_seq = seq;
+                return;
+            }
+            self.unheard.push_back((
+                host,
+                Incoming::Event {
+                    session,
+                    seq,
+                    event: HarnessEvent::Said(text),
+                },
+            ));
+            return;
+        }
+        self.unheard.push_back((host, item));
     }
 
     /// Whether reports from the servers are queued that the window has not acted on yet.
@@ -2551,7 +2598,15 @@ impl Work {
         if live && let HarnessEvent::ToolSignIn(address) = &event {
             open_sign_in(address);
         }
-        model.update(|screen| screen.hear_in_place(session, event));
+        if matches!(event, HarnessEvent::Said(_) | HarnessEvent::Thought(_)) {
+            let before = model.read(chrome);
+            model.update_conversation(|screen| screen.hear_in_place(session, event));
+            if before.is_none() || model.read(chrome) != before {
+                model.update(|_| {});
+            }
+        } else {
+            model.update(|screen| screen.hear_in_place(session, event));
+        }
         let history_ends = !live && Some(&seq) >= self.history.get(&key);
         if files_moved && !live {
             self.moved_in_history.insert(key.clone());
@@ -3728,5 +3783,23 @@ fn show_in_file_manager(directory: &str) {
 fn open_sign_in(address: &str) {
     if let Err(reason) = pm_harness::open_address(address) {
         eprintln!("could not open a tool server's sign-in page: {reason}");
+    }
+}
+
+/// What the window shows of `screen` outside its conversations that the words an agent
+/// streams could change: the sidebar and the title bar; nothing while the history page,
+/// which shows the conversations' words, is open.
+fn chrome(
+    screen: &Screen,
+) -> Option<(
+    pm_components::sidebar::SidebarState,
+    pm_components::title_bar::TitleBar,
+)> {
+    match screen {
+        Screen::Workspace(state) if state.page != pm_components::state::Page::History => Some((
+            pm_components::sidebar::SidebarState::of(state),
+            pm_components::title_bar::TitleBar::of(state),
+        )),
+        _ => None,
     }
 }

@@ -157,8 +157,8 @@ pub struct SidebarState {
     menu: Option<usize>,
     /// How wide the sidebar is, in logical pixels.
     width: f32,
-    /// How far the list is scrolled.
-    scroll: rustle::ScrollState,
+    /// The lazy list of chats and projects: how far it is scrolled and how tall its items are.
+    scroll: rustle::LazyListState,
 }
 
 impl SidebarState {
@@ -446,10 +446,33 @@ fn chats(view: &SidebarState) {
     );
 }
 
-/// Emits the whole sidebar `view` describes.
+/// One item of the sidebar's lazy list.
+#[derive(Clone, Copy, Debug, Hash, PartialEq)]
+enum Item {
+    /// The chats that belong to no project.
+    Chats,
+    /// The heading over the workspaces.
+    Heading,
+    /// The project at this position, with its sessions.
+    Project(usize),
+}
+
+/// The items of the sidebar's list `view` describes, from the top: its chats when it has
+/// any, the heading over the workspaces and each project in the order they are listed.
+fn items(view: &SidebarState) -> Vec<Item> {
+    let chats = (!view.chats.is_empty()).then_some(Item::Chats);
+    chats
+        .into_iter()
+        .chain([Item::Heading])
+        .chain(view.order.iter().map(|&index| Item::Project(index)))
+        .collect()
+}
+
+/// Emits the whole sidebar `view` describes, its chats and projects a lazy list that
+/// composes only the items in view.
 #[track_caller]
 pub fn sidebar(view: &SidebarState) {
-    view.scroll.set_scrollbar(rustle::ScrollbarStyle {
+    view.scroll.scroll().set_scrollbar(rustle::ScrollbarStyle {
         visibility: rustle::ScrollbarVisibility::Hidden,
         ..theme::scrollbar()
     });
@@ -499,20 +522,25 @@ pub fn sidebar(view: &SidebarState) {
                     );
                 },
             );
-            rustle::column_arranged(
-                Modifier::new()
-                    .weight(1.0)
-                    .fill_max_width()
-                    .vertical_scroll(&view.scroll)
-                    .padding_xy(theme::sp(2), 0.0),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    chats(view);
-                    heading("Workspaces");
-                    for &index in &view.order {
-                        rustle::key(index, || project(view, index));
-                    }
+            let items = items(view);
+            rustle::lazy_list_keyed(
+                Modifier::new().weight(1.0).fill_max_width(),
+                &view.scroll,
+                items.len(),
+                |index| items[index],
+                |index| {
+                    rustle::column_arranged(
+                        Modifier::new()
+                            .fill_max_width()
+                            .padding_xy(theme::sp(2), 0.0),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || match items[index] {
+                            Item::Chats => chats(view),
+                            Item::Heading => heading("Workspaces"),
+                            Item::Project(index) => project(view, index),
+                        },
+                    );
                 },
             );
         },

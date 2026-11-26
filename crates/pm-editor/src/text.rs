@@ -1,9 +1,23 @@
 //! The text of the code editor with its carets, selections, composition and undo history.
 
+use std::collections::VecDeque;
 use std::ops::Range;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use pm_buffer::Class;
 use pm_buffer::Reach;
+use pm_buffer::{Change, Step};
+
+/// The number the next change to any field's text gets, so that two texts with one revision are one text.
+static REVISIONS: AtomicU64 = AtomicU64::new(1);
+
+/// A revision no text has had yet.
+fn next_revision() -> u64 {
+    REVISIONS.fetch_add(1, Ordering::Relaxed)
+}
+
+/// How many steps a field keeps for whoever follows its text before it stops keeping them and tells that the whole text changed.
+const MOST_PENDING: usize = 10_000;
 
 /// Where a caret moves to.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -78,11 +92,11 @@ pub enum Edit {
 
 /// Text with a caret between two of its characters and, when the
 /// reader has selected some, the other end of the selection.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct Field {
     /// The text being edited, which holds no control characters but line breaks and tabs, and those only in a multiline field.
     text: String,
-    /// Counts changes to text without scanning or copying it to detect edits.
+    /// Names the text as it is, without scanning or copying it: every change gives it a number no text had before.
     revision: u64,
     /// The caret, as a byte offset on a character boundary.
     caret: usize,
@@ -93,10 +107,18 @@ pub struct Field {
     read_only: bool,
     /// Whether the text may hold line breaks, and so is more than one line.
     multiline: bool,
-    /// The states the line was in before each change, oldest first.
-    past: Vec<Snapshot>,
-    /// The states that were taken back, most recently taken back last.
-    future: Vec<Snapshot>,
+    /// The changes undo takes back, oldest first.
+    past: VecDeque<Record>,
+    /// The changes that were taken back, most recently taken back last.
+    future: Vec<Record>,
+    /// The steps the text took since whoever follows it last asked.
+    pending: Vec<Step>,
+    /// Whether there were too many steps to keep since whoever follows the text last asked.
+    lost: bool,
+    /// How long the text was when whoever follows it last asked for its steps.
+    pending_from: usize,
+    /// The steps the edit being made took so far.
+    made: Vec<Step>,
     /// Whether the last change was typing, which the next typing joins.
     typing: bool,
     /// Text an input method is composing at the caret: shown, but not part
@@ -109,17 +131,55 @@ pub struct Field {
     word_extra: String,
 }
 
-/// What a field held at one moment, for undoing back to it.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct Snapshot {
-    /// The line.
-    text: String,
+/// Where the carets and selections of a field were at one moment.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Carets {
     /// The caret.
     caret: usize,
     /// The other end of the selection.
     anchor: usize,
     /// The other selections.
     others: Vec<(usize, usize)>,
+}
+
+/// One change undo takes back: the steps the text took, and where the carets were before and after.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Record {
+    /// The steps, in the order they were made.
+    steps: Vec<Step>,
+    /// Where the carets were before.
+    before: Carets,
+    /// Where the carets were after, or when the change was last taken back.
+    after: Carets,
+}
+
+/// What became of the text since whoever follows it last asked.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Taken {
+    /// It took these steps, in order.
+    Steps(Vec<Step>),
+    /// It took too many steps to keep; it was this long before them.
+    Lost(usize),
+}
+
+impl PartialEq for Field {
+    /// Two fields are alike when their carets, selections and settings are and their texts and histories are: the same revision tells that at once, and only fields whose revisions differ compare their texts.
+    fn eq(&self, other: &Self) -> bool {
+        let texts = if self.revision == other.revision {
+            self.past.len() == other.past.len() && self.future.len() == other.future.len()
+        } else {
+            self.text == other.text && self.past == other.past && self.future == other.future
+        };
+        texts
+            && self.caret == other.caret
+            && self.anchor == other.anchor
+            && self.read_only == other.read_only
+            && self.multiline == other.multiline
+            && self.typing == other.typing
+            && self.composing == other.composing
+            && self.others == other.others
+            && self.word_extra == other.word_extra
+    }
 }
 
 /// How many changes undo remembers.
@@ -142,6 +202,8 @@ impl Field {
         Self {
             caret: text.len(),
             anchor: text.len(),
+            revision: next_revision(),
+            pending_from: text.len(),
             text,
             ..Self::default()
         }
@@ -182,9 +244,25 @@ impl Field {
     /// Makes every change since undo remembered `depth` changes one, so that taking it back is one step; what began it is the change that was first.
     pub fn squash_undo_since(&mut self, depth: usize) {
         if self.past.len() > depth + 1 {
-            self.past.truncate(depth + 1);
+            let later: Vec<Record> = self.past.drain(depth + 1..).collect();
+            if let Some(first) = self.past.back_mut() {
+                for record in later {
+                    first.steps.extend(record.steps);
+                    first.after = record.after;
+                }
+            }
         }
         self.typing = false;
+    }
+
+    /// The steps the text took since this was last asked, in order, which are forgotten here; or, when there were too many to keep, how long the text was before them.
+    pub fn take_steps(&mut self) -> Taken {
+        let from = std::mem::replace(&mut self.pending_from, self.text.len());
+        let steps = std::mem::take(&mut self.pending);
+        match std::mem::take(&mut self.lost) {
+            false => Taken::Steps(steps),
+            true => Taken::Lost(from),
+        }
     }
 
     /// Whether there is a change that was taken back to make again.
@@ -257,7 +335,7 @@ impl Field {
         &self.text
     }
 
-    /// How many times the text has changed; caret moves and composition do not change it.
+    /// The text's revision: it changes with every change to the text, to a number no text had before, and caret moves and composition do not change it.
     pub fn revision(&self) -> u64 {
         self.revision
     }
@@ -310,8 +388,23 @@ impl Field {
         }
     }
 
-    /// Makes `edit` to the text, caret and selections.
-    pub fn apply(&mut self, edit: Edit) {
+    /// Makes `edit` to the text, caret and selections, and says what steps the text took for it, in order.
+    pub fn apply(&mut self, edit: Edit) -> Vec<Step> {
+        self.change(edit);
+        let made = std::mem::take(&mut self.made);
+        if !made.is_empty() && !self.lost {
+            if self.pending.len() + made.len() > MOST_PENDING {
+                self.pending = Vec::new();
+                self.lost = true;
+            } else {
+                self.pending.extend(made.iter().cloned());
+            }
+        }
+        made
+    }
+
+    /// Makes `edit` to the text, caret and selections, the steps it takes gathered in `made`.
+    fn change(&mut self, edit: Edit) {
         match &edit {
             Edit::Undo => return self.undo(),
             Edit::Redo => return self.redo(),
@@ -339,7 +432,8 @@ impl Field {
             return;
         }
         let typed = matches!(&edit, Edit::Insert(c) if !c.is_whitespace());
-        let before = (changes && !(typed && self.typing)).then(|| self.snapshot());
+        let opens = changes && !(typed && self.typing);
+        let before = changes.then(|| self.carets());
         let previous = (self.revision, self.caret, self.anchor, self.others.clone());
         let everywhere = matches!(
             edit,
@@ -360,10 +454,22 @@ impl Field {
             self.perform(edit);
         }
         if changes && previous != (self.revision, self.caret, self.anchor, self.others.clone()) {
-            if let Some(before) = before {
-                self.past.push(before);
-                if self.past.len() > HISTORY {
-                    self.past.remove(0);
+            let steps = self.made.clone();
+            let after = self.carets();
+            match self.past.back_mut() {
+                Some(last) if !opens => {
+                    last.steps.extend(steps);
+                    last.after = after;
+                }
+                _ => {
+                    self.past.push_back(Record {
+                        steps,
+                        before: before.unwrap_or_default(),
+                        after,
+                    });
+                    if self.past.len() > HISTORY {
+                        self.past.pop_front();
+                    }
                 }
             }
             self.future.clear();
@@ -493,41 +599,42 @@ impl Field {
             .collect()
     }
 
-    /// The line, caret and selection as they are now.
-    fn snapshot(&self) -> Snapshot {
-        Snapshot {
-            text: self.text.clone(),
+    /// The carets and selections as they are now.
+    fn carets(&self) -> Carets {
+        Carets {
             caret: self.caret,
             anchor: self.anchor,
             others: self.others.clone(),
         }
     }
 
-    /// Takes in a state the line is put back to.
-    fn restore(&mut self, snapshot: Snapshot) {
-        if self.text != snapshot.text {
-            self.revision = self.revision.wrapping_add(1);
+    /// Makes `steps` to the text, one after another, and puts the carets where `carets` says.
+    fn restore(&mut self, steps: impl Iterator<Item = Step>, carets: &Carets) {
+        for step in steps {
+            self.splice(step.change.range, &step.change.text);
         }
-        self.text = snapshot.text;
-        self.caret = snapshot.caret;
-        self.anchor = snapshot.anchor;
-        self.others = snapshot.others;
+        self.caret = carets.caret;
+        self.anchor = carets.anchor;
+        self.others = carets.others.clone();
         self.typing = false;
     }
 
     /// Takes back the last change.
     fn undo(&mut self) {
-        if let Some(previous) = self.past.pop() {
-            self.future.push(self.snapshot());
-            self.restore(previous);
+        if let Some(mut record) = self.past.pop_back() {
+            record.after = self.carets();
+            let steps: Vec<Step> = record.steps.iter().rev().map(Step::inverse).collect();
+            self.restore(steps.into_iter(), &record.before);
+            self.future.push(record);
         }
     }
 
     /// Makes again the last change that was taken back.
     fn redo(&mut self) {
-        if let Some(next) = self.future.pop() {
-            self.past.push(self.snapshot());
-            self.restore(next);
+        if let Some(mut record) = self.future.pop() {
+            record.before = self.carets();
+            self.restore(record.steps.clone().into_iter(), &record.after);
+            self.past.push_back(record);
         }
     }
 
@@ -539,12 +646,25 @@ impl Field {
         self.anchor = self.caret;
     }
 
-    /// Replaces bytes only when their contents differ, updating the cheap text revision.
+    /// Replaces bytes only when their contents differ, giving the text a new revision.
     fn replace_text(&mut self, range: Range<usize>, text: &str) {
         if &self.text[range.clone()] != text {
-            self.text.replace_range(range, text);
-            self.revision = self.revision.wrapping_add(1);
+            self.splice(range, text);
         }
+    }
+
+    /// Replaces the bytes `range` of the text with `text`, gives the text a new revision and notes the step in `made`.
+    fn splice(&mut self, range: Range<usize>, text: &str) {
+        let removed = self.text[range.clone()].to_owned();
+        self.text.replace_range(range.clone(), text);
+        self.revision = next_revision();
+        self.made.push(Step {
+            change: Change {
+                range,
+                text: text.to_owned(),
+            },
+            removed,
+        });
     }
 
     /// Deletes what is selected, or else what lies between the caret and the

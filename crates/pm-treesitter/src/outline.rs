@@ -37,7 +37,7 @@ impl Syntax {
         let mut cursor = QueryCursor::new();
         cursor.set_byte_range(within);
         let mut found: Vec<Item> = Vec::new();
-        let mut matches = cursor.matches(query, self.tree.root_node(), text.as_bytes());
+        let mut matches = cursor.matches(query, self.tree().root_node(), text.as_bytes());
         while let Some(held) = matches.next() {
             let words = |wanted: Option<u32>| {
                 held.captures()

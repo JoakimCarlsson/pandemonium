@@ -509,9 +509,17 @@ impl App {
         }
     }
 
-    /// Writes the editor's settings to disk when they differ from what was last written.
+    /// Writes the editor's settings to disk when they differ from what was last written,
+    /// comparing them in place first so an unchanged screen copies nothing.
     fn persist_editor(&mut self) {
         self.follow_ligatures();
+        let saved = &self.saved_editor;
+        if !self
+            .model
+            .read(|screen| screen.editor_settings_differ(saved))
+        {
+            return;
+        }
         let Some(settings) = self
             .model
             .read(Screen::editor_settings)
@@ -525,8 +533,15 @@ impl App {
         self.saved_editor = settings;
     }
 
-    /// Writes the window's own settings to disk when they differ from what was last written, and puts what changed of them to work.
+    /// Writes the window's own settings to disk when they differ from what was last written, and puts what changed of them to work, comparing them in place first so an unchanged screen copies nothing.
     fn persist_window(&mut self) {
+        let saved = &self.saved_window;
+        if !self
+            .model
+            .read(|screen| screen.window_settings_differ(saved))
+        {
+            return;
+        }
         let Some(settings) = self
             .model
             .read(Screen::window_settings)

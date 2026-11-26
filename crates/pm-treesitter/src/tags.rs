@@ -15,7 +15,7 @@ impl Syntax {
         typed.push_str(&text[offset..]);
         let parsed = Self::parse(self.grammar().clone(), &typed)?;
         let greater = parsed
-            .tree
+            .tree()
             .root_node()
             .descendant_for_byte_range(offset, offset + 1)?;
         if greater.kind() != ">" || greater.start_byte() != offset {

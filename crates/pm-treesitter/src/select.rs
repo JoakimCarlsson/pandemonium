@@ -8,7 +8,7 @@ impl Syntax {
     /// The smallest piece of syntax that holds the bytes `range` and more besides, or nothing when the whole text is already held.
     pub fn larger_node(&self, range: Range<usize>) -> Option<Range<usize>> {
         let mut node = self
-            .tree
+            .tree()
             .root_node()
             .descendant_for_byte_range(range.start, range.end)?;
         loop {
@@ -23,7 +23,7 @@ impl Syntax {
     /// Whether the byte `offset` is inside a string or a comment, where brackets and quotes typed are text rather than code.
     pub fn in_text(&self, offset: usize) -> bool {
         let Some(mut node) = self
-            .tree
+            .tree()
             .root_node()
             .descendant_for_byte_range(offset, offset)
         else {
@@ -44,7 +44,7 @@ impl Syntax {
     /// The bytes of the smallest piece of syntax around the byte `offset` that spans at least three lines, so that the lines between its first and its last can be folded away.
     pub fn fold_range(&self, offset: usize) -> Option<Range<usize>> {
         let mut node = self
-            .tree
+            .tree()
             .root_node()
             .descendant_for_byte_range(offset, offset)?;
         loop {

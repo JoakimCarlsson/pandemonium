@@ -471,7 +471,7 @@ impl WorkspaceState {
     /// the field a name is typed into when `target` is being renamed or `target` is the folder
     /// a new entry is named in.
     pub(crate) fn keep_tree_row_in_view(&self, target: &TreeTarget) {
-        let entries = tree(&self.files, &self.tree_folders);
+        let entries = cache::tree_of(&self.files, &self.tree_folders);
         let items = items(self, &entries);
         let naming_here =
             renaming(self, &target.path) || (target.folder && new_in(self, &target.path).is_some());
@@ -597,7 +597,7 @@ fn folder_row(
 /// space under them, composing only the items in view and the one focus is on.
 #[track_caller]
 pub fn list(state: &WorkspaceState) {
-    let entries = tree(&state.files, &state.tree_folders);
+    let entries = cache::tree_of(&state.files, &state.tree_folders);
     let items = items(state, &entries);
     let marks = marks(state);
     let chosen = state.tree_picked();

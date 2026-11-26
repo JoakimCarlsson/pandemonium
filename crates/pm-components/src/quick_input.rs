@@ -51,7 +51,8 @@ type Cells<'a> = Box<dyn FnOnce() + 'a>;
 /// Emits the quick input for `listing` as a popup at its place in the box it is declared in: its field, then the rows around the one picked, or what keeps it empty.
 #[track_caller]
 pub fn quick_input(listing: &Listing) {
-    let shown = listing.items.rows();
+    let shown: std::rc::Rc<[usize]> = listing.items.rows().into();
+    let query = listing.items.query();
     let count = shown.len();
     let status = match (&listing.problem, listing.answered, count) {
         (Some(problem), _, _) => Some(problem.clone()),
@@ -137,7 +138,7 @@ pub fn quick_input(listing: &Listing) {
                             rustle::LazyContent::new(),
                             count,
                             |place| place,
-                            |place| quick_row(listing, place, shown[place], place == picked),
+                            |place| quick_row(listing, (&shown, &query), place, place == picked),
                         );
                     },
                 );
@@ -176,9 +177,11 @@ fn cut(modifier: Modifier, content: impl Into<String>, pixels: u32, tone: Role) 
     );
 }
 
-/// Emits the row at `place` among those shown, of the item at `index`, filled under the pointer and when `picked`.
-fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
-    let query = &listing.items.query();
+/// Emits the row at `place` among those shown, filled under the pointer and when `picked`;
+/// `shown` holds the items the rows show, worked out once for all the rows, and `query` what
+/// is typed to narrow them.
+fn quick_row(listing: &Listing, (shown, query): (&[usize], &str), place: usize, picked: bool) {
+    let index = shown[place];
     let (cells, group): (Cells<'_>, Option<(&str, bool)>) = match &listing.items {
         Items::Commands {
             commands,
@@ -187,7 +190,6 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
             recent,
             ..
         } => {
-            let shown = listing.items.rows();
             let kind = |place: usize| {
                 shown.get(place).map(|held| {
                     u8::from(*held >= commands.len())

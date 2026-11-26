@@ -779,10 +779,7 @@ fn guides(document: &Document, rows: Range<usize>) -> Vec<Vec<usize>> {
     let total = document.lines();
     let reach_back = rows.start.saturating_sub(GUIDE_REACH);
     let reach_on = (rows.end + GUIDE_REACH).min(total);
-    let columns: Vec<Option<usize>> = (reach_back..reach_on)
-        .map(|index| indent_columns(document, index))
-        .collect();
-    let at = |index: usize| columns[index - reach_back];
+    let at = |index: usize| indent_columns(document, index);
     rows.map(|index| {
         let depth = at(index).unwrap_or_else(|| {
             let before = (reach_back..index).rev().find_map(at).unwrap_or(0);
@@ -860,6 +857,30 @@ fn line_padding() -> f32 {
     theme::sp(2)
 }
 
+/// How often the work on a text under way away from the thread that draws is looked in on.
+const SETTLE_POLL: std::time::Duration = std::time::Duration::from_millis(8);
+
+/// Composes the caller again once the work on `document` under way away from the thread that draws, parsing it again and comparing it with the last commit, is done, so that what it found is drawn; what was known before is drawn meanwhile.
+#[track_caller]
+fn settle(document: &Document) {
+    let pending = document.pending();
+    let settled = rustle::remember(|| 0_u64);
+    let bumped = settled.clone();
+    rustle::launched_effect(
+        pending.as_ref().map(pm_editor::Pending::id),
+        move |scope| async move {
+            let Some(pending) = pending else {
+                return;
+            };
+            while !pending.is_settled() {
+                scope.delay(SETTLE_POLL).await;
+            }
+            bumped.set(bumped.get().wrapping_add(1));
+        },
+    );
+    settled.get();
+}
+
 /// Emits the lines of `document` that show as a lazy list with `modifier`, scrolled by `scroll` in a view `height` tall, each drawn as `look` says, followed by a note when the file was cut short.
 #[track_caller]
 fn lines(
@@ -870,7 +891,8 @@ fn lines(
     height: f32,
 ) {
     let settings = look.settings;
-    let shown = document.shown_lines(0, document.rows());
+    settle(document);
+    let rows = document.rows();
     let pair: Vec<Range<usize>> = document
         .syntax
         .as_ref()
@@ -886,10 +908,10 @@ fn lines(
         modifier,
         scroll,
         rustle::LazyContent::new().padding_each(line_padding(), line_padding() + beyond),
-        shown.len() + usize::from(document.truncated),
-        |item| shown.get(item).copied().unwrap_or(usize::MAX),
-        |item| match shown.get(item) {
-            Some(&index) => shown_line(document, index, &pair, look),
+        rows + usize::from(document.truncated),
+        |item| document.shown_line(item).unwrap_or(usize::MAX),
+        |item| match document.shown_line(item) {
+            Some(index) => shown_line(document, index, &pair, look),
             None => parts::note(4, 2, "The rest of the file is not shown.", 12, Role::Subtle),
         },
     );

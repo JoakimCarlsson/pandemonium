@@ -18,7 +18,7 @@ use pm_components::{adder, history, plan, review, settings, sidebar};
 
 pub use pm_components::state::{Outgoing, WorkspaceState};
 
-use crate::observed::region;
+use crate::observed::{quiet_region, region, screen_generation};
 use pm_components::sash::Sash;
 use pm_components::state::Page;
 
@@ -63,6 +63,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
     let paned = state.paned();
     let inner = state.inner_sizes();
     let scales = (theme::step_scale(), theme::text_scale());
+    let generation = screen_generation();
     let frame = state.code_lines.frame(Modifier::new().fill_max_size());
     keyboard_asks(state);
     rustle::stack_with(frame, || {
@@ -74,20 +75,38 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
                 Arrangement::Start,
                 Alignment::Start,
                 || {
-                    let bar = TitleBar::of(state);
-                    rustle::skippable((bar.clone(), width, height, inner, scales), move || {
-                        bar.build();
-                    });
+                    match generation {
+                        Some(generation) => {
+                            rustle::skippable((generation, width, height, inner, scales), || {
+                                TitleBar::of(state).build()
+                            })
+                        }
+                        None => {
+                            let bar = TitleBar::of(state);
+                            rustle::skippable(
+                                (bar.clone(), width, height, inner, scales),
+                                move || bar.build(),
+                            );
+                        }
+                    }
                     row_arranged(
                         Modifier::new().weight(1.0).fill_max_width(),
                         Arrangement::Start,
                         Alignment::Start,
                         || {
                             if state.sidebar_open {
-                                let view = sidebar::SidebarState::of(state);
-                                rustle::skippable((view.clone(), scales), move || {
-                                    sidebar::sidebar(&view);
-                                });
+                                match generation {
+                                    Some(generation) => rustle::skippable(
+                                        (generation, sidebar_width, scales),
+                                        || sidebar::sidebar(&sidebar::SidebarState::of(state)),
+                                    ),
+                                    None => {
+                                        let view = sidebar::SidebarState::of(state);
+                                        rustle::skippable((view.clone(), scales), move || {
+                                            sidebar::sidebar(&view);
+                                        });
+                                    }
+                                }
                                 Sash::column(Target::Window(WindowEvent::SidebarSash))
                                     .between()
                                     .build();
@@ -132,7 +151,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
                                 Sash::column(Target::Window(WindowEvent::ReviewSash))
                                     .between()
                                     .build();
-                                region((review_width, height, inner), || {
+                                quiet_region((review_width, height, inner), || {
                                     review::review(state, session)
                                 });
                             }

@@ -427,17 +427,20 @@ impl Session {
         self.say(&format!("{separator}{text}"));
     }
 
-    /// Adds `text` to the reply being written, in a paragraph of its own when a step came between.
+    /// Adds `text` to the reply being written, in a paragraph of its own when a step came
+    /// between, and records where in the reply's text the piece it extends or starts lies.
     fn say(&mut self, text: &str) {
         let reply = self.reply();
         if !reply.text.is_empty() && reply.steps.len() > reply.said_after {
             reply.text.push_str("\n\n");
         }
+        let start = reply.text.len();
         reply.text.push_str(text);
+        let end = reply.text.len();
         let before = reply.steps.len();
         match reply.said.last_mut() {
-            Some((at, piece)) if *at == before => piece.push_str(text),
-            _ => reply.said.push((before, text.to_owned())),
+            Some((at, piece)) if *at == before && piece.end == start => piece.end = end,
+            _ => reply.said.push((before, start..end)),
         }
         reply.said_after = before;
     }

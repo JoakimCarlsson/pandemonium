@@ -480,12 +480,16 @@ impl Items {
             Self::History {
                 commits, versions, ..
             } => (0..commits.len() + versions.len()).collect(),
-            Self::Outline { items, .. } => items
-                .iter()
-                .enumerate()
-                .filter(|(_, item)| narrows_to(&item.name, self.query().trim()))
-                .map(|(place, _)| place)
-                .collect(),
+            Self::Outline { items, .. } => {
+                let query = self.query();
+                let typed = query.trim();
+                items
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, item)| narrows_to(&item.name, typed))
+                    .map(|(place, _)| place)
+                    .collect()
+            }
             Self::Files { matched, .. }
             | Self::Commands { matched, .. }
             | Self::Sessions { matched, .. }
@@ -554,9 +558,22 @@ impl Items {
         text.strip_prefix(prefix).unwrap_or(&text).to_owned()
     }
 
-    /// How many rows there are.
+    /// How many rows there are, counted without listing them where the items say it.
     pub fn len(&self) -> usize {
-        self.rows().len()
+        match self {
+            Self::Actions { offered, .. } => offered.len(),
+            Self::History {
+                commits, versions, ..
+            } => commits.len() + versions.len(),
+            Self::Files { matched, .. }
+            | Self::Commands { matched, .. }
+            | Self::Sessions { matched, .. }
+            | Self::Choices { matched, .. } => matched.len(),
+            Self::Places { locations, .. }
+            | Self::Symbols { locations, .. }
+            | Self::Search { locations, .. } => locations.len(),
+            Self::Outline { .. } | Self::Line { .. } => self.rows().len(),
+        }
     }
 
     /// Whether there are no rows.
@@ -796,7 +813,7 @@ impl WorkspaceState {
                     problem = Some("Open a project to go to its files".to_owned());
                 }
                 let paths = if session.is_some() {
-                    self.files.clone()
+                    self.files.to_vec()
                 } else {
                     Vec::new()
                 };

@@ -35,7 +35,7 @@ impl Syntax {
     fn listed_scope(&self, offset: usize) -> Option<(String, Range<usize>)> {
         let scopes = &self.grammar().editing().scopes;
         let mut node = self
-            .tree
+            .tree()
             .root_node()
             .descendant_for_byte_range(offset, offset)?;
         loop {
@@ -59,7 +59,7 @@ impl Syntax {
         let mut cursor = QueryCursor::new();
         cursor.set_byte_range(offset.saturating_sub(1)..(offset + 1).min(text.len()));
         let mut best: Option<(String, Range<usize>)> = None;
-        let mut captures = cursor.captures(query, self.tree.root_node(), text.as_bytes());
+        let mut captures = cursor.captures(query, self.tree().root_node(), text.as_bytes());
         while let Some((held, index)) = captures.next() {
             let capture = held.captures()[*index];
             let name = names[capture.index as usize];

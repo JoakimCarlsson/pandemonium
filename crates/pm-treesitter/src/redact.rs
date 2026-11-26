@@ -17,7 +17,7 @@ impl Syntax {
         };
         let mut cursor = QueryCursor::new();
         let mut found: Vec<Range<usize>> = Vec::new();
-        let mut captures = cursor.captures(query, self.tree.root_node(), text.as_bytes());
+        let mut captures = cursor.captures(query, self.tree().root_node(), text.as_bytes());
         while let Some((held, index)) = captures.next() {
             let capture = held.captures()[*index];
             if capture.index == redact {

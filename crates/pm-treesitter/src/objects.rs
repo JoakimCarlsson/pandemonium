@@ -61,7 +61,7 @@ impl Syntax {
         let mut places: std::collections::HashMap<(usize, usize, usize), usize> =
             std::collections::HashMap::new();
         let mut cursor = QueryCursor::new();
-        let mut matches = cursor.matches(query, self.tree.root_node(), text.as_bytes());
+        let mut matches = cursor.matches(query, self.tree().root_node(), text.as_bytes());
         while let Some(held) = matches.next() {
             for (kind, (object, around, within)) in kinds.into_iter().enumerate() {
                 let ranges = |wanted: Option<u32>| {
@@ -117,7 +117,7 @@ impl Syntax {
         let mut cursor = QueryCursor::new();
         cursor.set_byte_range(offset.saturating_sub(1)..(offset + 1).min(text.len()));
         let mut best: Option<(Range<usize>, Option<Range<usize>>)> = None;
-        let mut matches = cursor.matches(query, self.tree.root_node(), text.as_bytes());
+        let mut matches = cursor.matches(query, self.tree().root_node(), text.as_bytes());
         while let Some(held) = matches.next() {
             let ranges = |wanted: Option<u32>| -> Vec<Range<usize>> {
                 held.captures()

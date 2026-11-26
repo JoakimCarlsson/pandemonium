@@ -235,18 +235,36 @@ fn blank(rows: usize) {
     rustle::spacer(Modifier::new().height(rows as f32 * ROW));
 }
 
-/// Emits the rows of `commits` that are in a body `height` tall scrolled `scroll` down, with a blank for those above and below.
+/// Emits the rows of `commits` that are in a body `height` tall scrolled as `scroll` says, with
+/// a blank for those above and below. The offset is read in a block of its own, so scrolling
+/// composes only that block again rather than the panel around it, and the rows are composed
+/// again only when the ones in view change.
 #[track_caller]
-fn visible(commits: &[Commit], columns: usize, scroll: f32, height: f32) {
-    let first = ((scroll / ROW).floor().max(0.0) as usize).min(commits.len());
-    let last = (((scroll + height) / ROW).ceil() as usize + 1).min(commits.len());
-    blank(first);
-    for (offset, commit) in commits[first..last].iter().enumerate() {
-        rustle::key(first + offset, || {
-            commit_row(commit, columns, first + offset)
+fn visible(commits: &[Commit], columns: usize, scroll: &rustle::ScrollState, height: f32) {
+    let identity = (
+        commits.as_ptr() as usize,
+        commits.len(),
+        columns,
+        height.to_bits(),
+        theme::step_scale().to_bits(),
+        theme::text_scale().to_bits(),
+        theme::font_key(),
+    );
+    rustle::skippable(identity, || {
+        let offset = scroll.offset();
+        let first = ((offset / ROW).floor().max(0.0) as usize).min(commits.len());
+        let last = (((offset + height) / ROW).ceil() as usize + 1).min(commits.len());
+        let shown = commits[first..last].to_vec();
+        rustle::skippable((first, last, shown, identity), || {
+            blank(first);
+            for (offset, commit) in commits[first..last].iter().enumerate() {
+                rustle::key(first + offset, || {
+                    commit_row(commit, columns, first + offset)
+                });
+            }
+            blank(commits.len() - last);
         });
-    }
-    blank(commits.len() - last);
+    });
 }
 
 /// Emits the button saying which references the graph lists, which switches between the checked out branch and all of them, with `tip` shown while it is hovered.
@@ -472,7 +490,7 @@ pub fn graph(state: &WorkspaceState) {
                                         visible(
                                             &git.history,
                                             columns,
-                                            git.graph_scroll.offset(),
+                                            &git.graph_scroll,
                                             height - 28.0,
                                         );
                                     }

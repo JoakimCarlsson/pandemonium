@@ -29,7 +29,7 @@ impl Syntax {
         let mut cursor = QueryCursor::new();
         cursor.set_byte_range(line.start..line.end.max(offset + 1).min(text.len()));
         let mut found = Indent::default();
-        let mut captures = cursor.captures(query, self.tree.root_node(), text.as_bytes());
+        let mut captures = cursor.captures(query, self.tree().root_node(), text.as_bytes());
         while let Some((found_match, index)) = captures.next() {
             let capture = found_match.captures()[*index];
             let node = capture.node;
@@ -68,7 +68,7 @@ impl Syntax {
         let mut cursor = QueryCursor::new();
         cursor.set_byte_range(0..before.min(text.len()));
         let mut found: Vec<(usize, usize)> = Vec::new();
-        let mut captures = cursor.captures(query, self.tree.root_node(), text.as_bytes());
+        let mut captures = cursor.captures(query, self.tree().root_node(), text.as_bytes());
         while let Some((held, index)) = captures.next() {
             let capture = held.captures()[*index];
             if wanted.contains(&capture.index) && capture.node.start_byte() < before {
@@ -90,7 +90,7 @@ impl Syntax {
         let outdent = query.capture_index_for_name("outdent");
         let mut cursor = QueryCursor::new();
         cursor.set_byte_range(offset..(offset + 1).min(text.len()));
-        let mut captures = cursor.captures(query, self.tree.root_node(), text.as_bytes());
+        let mut captures = cursor.captures(query, self.tree().root_node(), text.as_bytes());
         while let Some((found_match, index)) = captures.next() {
             let capture = found_match.captures()[*index];
             if Some(capture.index) == outdent && capture.node.start_byte() == offset {

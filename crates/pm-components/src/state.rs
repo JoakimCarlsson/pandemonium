@@ -1557,8 +1557,8 @@ pub struct WorkspaceState {
     pub(crate) diff_anchor: Option<(usize, String)>,
     /// The files, by session and path, whose diffs were asked of the server and have not come.
     pub(crate) asking_diffs: std::collections::HashSet<(usize, String)>,
-    /// How far down the review panel's list of changes or search results is scrolled, in logical pixels.
-    pub tree_scroll: rustle::ScrollState,
+    /// The lazy list of the review panel's changes: how far down it is scrolled and how tall its groups turned out.
+    pub tree_scroll: rustle::LazyListState,
     /// The lazy list of the project's files in the review panel: how far down it is scrolled and how tall its rows turned out.
     pub files_list: rustle::LazyListState,
     /// The project whose folder the review panel was last asked to read while no session was open.
@@ -1621,10 +1621,10 @@ pub struct WorkspaceState {
     pub message: TextFieldState,
     /// What the history page is narrowed to.
     pub history_search: TextFieldState,
-    /// How far the history session groups have scrolled, in logical pixels.
-    pub history_scroll: rustle::ScrollState,
-    /// How far the sidebar's list is scrolled, in logical pixels.
-    pub sidebar_scroll: rustle::ScrollState,
+    /// The lazy list of the history page's groups and rows: how far it has scrolled and how tall its items turned out.
+    pub history_scroll: rustle::LazyListState,
+    /// The lazy list of the sidebar's chats and projects: how far it is scrolled and how tall its items turned out.
+    pub sidebar_scroll: rustle::LazyListState,
     /// The submodule of the project the new session page starts work in, or nothing for the project itself.
     pub new_in: Option<String>,
     /// How big the panels around the main area are, as observable state.
@@ -1720,9 +1720,9 @@ pub struct WorkspaceState {
     /// The commands and skills each agent offers behind a slash, by the agent's position, once it has been asked.
     pub agent_commands: Vec<Vec<Slash>>,
     /// The files of the folder the prompt is for, which an `@` in the prompt offers.
-    pub files: Vec<String>,
+    pub files: crate::listed::Listed,
     /// The folders among `files` that hold no tracked file, by path.
-    pub tree_folders: Vec<String>,
+    pub tree_folders: crate::listed::Listed,
     /// The files and folders of the tree that git ignores, by path.
     pub tree_ignored: std::collections::HashSet<String>,
     /// The folder `files` was read for.
@@ -2202,7 +2202,9 @@ impl WorkspaceState {
             Target::Browser(BrowserEvent::BrowserFindField) => self.browser_find_typed(),
             Target::Dialog(DialogEvent::AdderField) => self.adder_typed(),
             Target::Dialog(DialogEvent::PickerField) => self.folder_picker_typed(),
-            Target::Sidebar(SidebarEvent::HistorySearch) => self.history_scroll.jump_to(0.0),
+            Target::Sidebar(SidebarEvent::HistorySearch) => {
+                self.history_scroll.scroll().jump_to(0.0)
+            }
             Target::Settings(SettingsEvent::ExtensionsSearch) => self.extensions_typed(),
             Target::Composer(ComposerEvent::MenuFilter) => self.menu_scroll.jump_to(0.0),
             id if crate::settings_drafts::is_draft_field(id) => self.draft_typed(),
@@ -3254,7 +3256,7 @@ impl WorkspaceState {
     /// Shows `tab` in the review panel from its top.
     pub(crate) fn show_review_tab(&mut self, tab: ReviewTab) {
         self.review_tab = tab;
-        self.tree_scroll.jump_to(0.0);
+        self.tree_scroll.scroll().jump_to(0.0);
         self.files_list.scroll().jump_to(0.0);
     }
 

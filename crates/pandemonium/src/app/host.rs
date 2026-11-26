@@ -739,11 +739,16 @@ impl App {
     /// what woke it. The agents' work and the servers' answers are taken in and what the
     /// reader asked of them delivered; the app catches up with an event the interface
     /// finished handling (the text typed and the focus moved are followed) and with a frame
-    /// drawn; then it follows what that changed.
+    /// drawn; then it follows what that changed. A backlog of reports left after the look that
+    /// changed nothing to draw wakes the app again at once, as no drawn frame will.
     pub(super) fn on_wake(&mut self) {
         self.window_opened();
         self.work.discover();
+        let before = self.model.generations();
         self.work.poll(&self.model);
+        if self.work.hearing() && self.model.generations() == before {
+            (self.loop_wake)();
+        }
         if self.model.read(Screen::has_outbox) {
             self.deliver();
         }
@@ -820,12 +825,13 @@ impl App {
 
     /// Says what the app waits on while it is idle, for the root's effects: what each thing
     /// that waits for a pause waits on, how often the agents' work is to be looked at,
-    /// whether the browser's pages are pumped, and whether the app quits.
+    /// whether the browser's pages are pumped, and whether the app quits. Reports the servers
+    /// sent wake the app themselves, and a backlog left after one look is taken on after the
+    /// frame it changed is drawn, which wakes the app again, so the work is looked at on a
+    /// timer only while something is yet to be answered.
     fn publish_idle(&mut self) {
         let waiting = self.model.read(|screen| screen.waiting()) || self.work.busy();
-        let polling = if self.work.hearing() {
-            Some(Duration::from_millis(2))
-        } else if waiting {
+        let polling = if waiting {
             Some(Duration::from_millis(50))
         } else {
             None

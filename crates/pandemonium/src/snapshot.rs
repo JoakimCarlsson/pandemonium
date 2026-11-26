@@ -3310,7 +3310,8 @@ impl Shot {
                     "docs/protocol.md",
                 ]
                 .map(str::to_owned)
-                .to_vec();
+                .to_vec()
+                .into();
                 Screen::Workspace(state.file_finder_requested((340.0, 0.0)).handle(Event::Field(FieldEvent::Typed { field: Target::Editor(EditorEvent::ListingFilter), text: String::from("ses") })))
             }
             Self::QuickHelp => Screen::Workspace(code().file_finder_requested((340.0, 0.0)).handle(Event::Field(FieldEvent::Typed { field: Target::Editor(EditorEvent::ListingFilter), text: String::from("?") }))),
@@ -3921,7 +3922,7 @@ impl Shot {
                     state.sessions.push(session);
                 }
                 if self == Self::HistoryScrolled {
-                    state.history_scroll.jump_to(f32::MAX);
+                    state.history_scroll.scroll_to_end();
                 }
                 Screen::Workspace(state)
             }
@@ -6025,7 +6026,8 @@ fn compared(how: Compare) -> WorkspaceState {
                 "Cargo.toml",
             ]
             .map(str::to_owned)
-            .to_vec();
+            .to_vec()
+            .into();
             state.compare_with_file_requested((340.0, 0.0))
         }
         Compare::File => state.with_compared(0, CODE_PATH, other, false, &older),

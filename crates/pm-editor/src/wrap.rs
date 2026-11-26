@@ -1,6 +1,7 @@
 //! Soft wrap: a line longer than a row holds broken onto the rows under it, at a space where there is one, and the rows the lines that show then take.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use crate::document::Document;
 
@@ -35,7 +36,141 @@ pub fn segments(text: &str, columns: usize, tab: usize) -> Vec<Range<usize>> {
 /// How many characters a row holds when a file whose lines do not wrap still has rows above some of its lines, which the rows of wrapped lines are counted for.
 const UNWRAPPED: usize = usize::MAX / 4;
 
+/// The rows the lines of a text take as they wrap, kept from one call to the next: how many each line's text breaks into, and how many rows come before each line once the folded lines are left out and the rows of links above lines added.
+#[derive(Debug, Default)]
+pub(crate) struct WrapIndex {
+    /// The revision of the text the rows are of.
+    revision: u64,
+    /// How many characters a row holds.
+    columns: usize,
+    /// How many of them a tab takes.
+    tab: usize,
+    /// How many rows each line's text breaks into.
+    counts: Vec<u32>,
+    /// The lines folded away the rows before each line leave out.
+    hidden: Arc<Vec<Range<usize>>>,
+    /// The lines with a row of links above them, in order.
+    lenses: Vec<usize>,
+    /// How many rows come before each line, with one more for the end of the text.
+    before: Arc<Vec<usize>>,
+}
+
+/// How many rows `text`, a line, breaks into when a row holds `columns` characters, a tab taking `tab` of them; a line always takes one.
+fn count_rows(text: &str, columns: usize, tab: usize) -> u32 {
+    if columns >= UNWRAPPED || (text.len() <= columns.max(1) && !text.contains('\t')) {
+        return 1;
+    }
+    segments(text, columns, tab).len() as u32
+}
+
 impl Document {
+    /// The lines that have a row of links above them, in order.
+    fn lens_lines(&self) -> Vec<usize> {
+        let mut lines: Vec<usize> = self
+            .annotations
+            .lenses
+            .items
+            .iter()
+            .filter(|lens| lens.offset <= self.field.text().len())
+            .map(|lens| self.line_of(lens.offset))
+            .collect();
+        if !self.editing.run_lenses.is_empty() {
+            lines.extend(
+                self.runnables()
+                    .iter()
+                    .filter(|(_, place)| self.is_lens_place(place))
+                    .map(|(line, _)| *line),
+            );
+        }
+        lines.sort_unstable();
+        lines.dedup();
+        lines
+    }
+
+    /// How many rows the text of each line breaks into when a row holds `columns` characters, taken from `kept` for the lines the last edit did not touch when `kept` holds them for the text before it.
+    fn row_counts(&self, kept: Option<WrapIndex>, columns: usize, tab: usize) -> Vec<u32> {
+        let text = self.field.text();
+        let count = |index: usize| count_rows(&text[self.line(index)], columns, tab);
+        let revision = self.field.revision();
+        match kept {
+            Some(kept)
+                if kept.columns == columns && kept.tab == tab && kept.revision == revision =>
+            {
+                kept.counts
+            }
+            Some(mut kept)
+                if kept.columns == columns
+                    && kept.tab == tab
+                    && self.last_edit.as_ref().is_some_and(|edit| {
+                        edit.from == kept.revision
+                            && edit.to == revision
+                            && edit.old_rows.end <= kept.counts.len()
+                    }) =>
+            {
+                let Some(edit) = &self.last_edit else {
+                    return kept.counts;
+                };
+                kept.counts
+                    .splice(edit.old_rows.clone(), edit.new_rows.clone().map(count));
+                kept.counts
+            }
+            _ => (0..self.lines()).map(count).collect(),
+        }
+    }
+
+    /// How many rows come before each line, with one more for the end of the text, when a row holds `columns` characters, worked out again only for what changed since it was last asked for.
+    fn rows_before(&self, columns: usize) -> Arc<Vec<usize>> {
+        let tab = self.editing.indent;
+        let hidden = self.hidden();
+        let lenses = self.lens_lines();
+        let mut kept = self
+            .wraps
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let revision = self.field.revision();
+        if let Some(held) = kept.as_ref()
+            && held.revision == revision
+            && held.columns == columns
+            && held.tab == tab
+            && held.hidden == hidden
+            && held.lenses == lenses
+        {
+            return held.before.clone();
+        }
+        let counts = self.row_counts(kept.take(), columns, tab);
+        let mut before = Vec::with_capacity(counts.len() + 1);
+        let mut row = 0;
+        let mut gaps = hidden.iter().peekable();
+        let mut marked = lenses.iter().peekable();
+        for (index, rows) in counts.iter().enumerate() {
+            before.push(row);
+            while gaps.peek().is_some_and(|gap| gap.end <= index) {
+                gaps.next();
+            }
+            if gaps.peek().is_some_and(|gap| gap.start <= index) {
+                continue;
+            }
+            while marked.peek().is_some_and(|line| **line < index) {
+                marked.next();
+            }
+            let lens = usize::from(marked.peek().is_some_and(|line| **line == index));
+            row += *rows as usize + lens;
+        }
+        before.push(row);
+        let before = Arc::new(before);
+        *kept = Some(WrapIndex {
+            revision,
+            columns,
+            tab,
+            counts,
+            hidden,
+            lenses,
+            before: before.clone(),
+        });
+        before
+    }
+
     /// `columns`, or room for any line when lines do not wrap but the language puts links on rows of their own above some lines.
     fn with_lens_rows(&self, columns: Option<usize>) -> Option<usize> {
         match columns {
@@ -70,42 +205,29 @@ impl Document {
         }
     }
 
-    /// The lines that show, by index, in order.
-    fn every_shown_line(&self) -> Vec<usize> {
-        self.shown_lines(0, self.lines())
-    }
-
     /// How many rows the lines that show take when a row has room for `columns` characters.
     pub fn wrapped_rows(&self, columns: Option<usize>) -> usize {
         let columns = self.with_lens_rows(columns);
         match columns {
-            Some(_) => self
-                .every_shown_line()
-                .into_iter()
-                .map(|index| self.line_rows(index, columns))
-                .sum(),
+            Some(columns) => self.rows_before(columns).last().copied().unwrap_or(0),
             None => self.rows(),
         }
     }
 
     /// The first row the line at `index` is drawn in when a row has room for `columns` characters; a hidden line is drawn in the rows of the line that stands for it.
     pub fn wrapped_row_of_line(&self, index: usize, columns: Option<usize>) -> usize {
-        let columns = self.with_lens_rows(columns);
-        if columns.is_none() {
+        let Some(columns) = self.with_lens_rows(columns) else {
             return self.row_of_line(index);
-        }
+        };
         let standing = self.standing_for(index);
-        self.every_shown_line()
-            .into_iter()
-            .take_while(|shown| *shown < standing)
-            .map(|shown| self.line_rows(shown, columns))
-            .sum()
+        let before = self.rows_before(columns);
+        before.get(standing).or(before.last()).copied().unwrap_or(0)
     }
 
     /// The line that shows standing for the line at `index`: itself when it shows, or the line its fold hangs from.
     fn standing_for(&self, index: usize) -> usize {
-        self.hidden_lines()
-            .into_iter()
+        self.hidden()
+            .iter()
             .find(|lines| lines.contains(&index))
             .map_or(index, |lines| lines.start.saturating_sub(1))
     }
@@ -132,24 +254,28 @@ impl Document {
         count: usize,
         columns: Option<usize>,
     ) -> (Vec<usize>, usize) {
-        let columns = self.with_lens_rows(columns);
-        if columns.is_none() {
+        let Some(columns) = self.with_lens_rows(columns) else {
             return (self.shown_lines(first, count), first.min(self.rows()));
-        }
-        let mut row = 0;
-        let mut start = None;
+        };
+        let before = self.rows_before(columns);
+        let total = self.lines();
+        let mut index = before[1..=total].partition_point(|end| *end <= first);
+        let mut row = before[index.min(total)];
+        let start = row;
         let mut lines = Vec::new();
-        for index in self.every_shown_line() {
-            let rows = self.line_rows(index, columns);
-            if row + rows > first {
-                start.get_or_insert(row);
-                lines.push(index);
+        while index < total {
+            let rows = before[index + 1] - before[index];
+            index += 1;
+            if rows == 0 {
+                continue;
             }
+            lines.push(index - 1);
             row += rows;
             if row >= first + count {
                 break;
             }
         }
-        (lines, start.unwrap_or(row))
+        let start = if lines.is_empty() { row } else { start };
+        (lines, start)
     }
 }

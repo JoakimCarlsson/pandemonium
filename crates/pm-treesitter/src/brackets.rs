@@ -14,7 +14,7 @@ impl Syntax {
         let close = query.capture_index_for_name("close")?;
         let mut cursor = QueryCursor::new();
         cursor.set_byte_range(caret.saturating_sub(1)..(caret + 1).min(text.len()));
-        let mut matches = cursor.matches(query, self.tree.root_node(), text.as_bytes());
+        let mut matches = cursor.matches(query, self.tree().root_node(), text.as_bytes());
         let mut best: Option<(Range<usize>, Range<usize>)> = None;
         while let Some(found) = matches.next() {
             let range_of = |wanted: u32| {
@@ -54,7 +54,7 @@ impl Syntax {
         };
         let mut found: Vec<(Range<usize>, bool)> = Vec::new();
         let mut cursor = QueryCursor::new();
-        let mut matches = cursor.matches(query, self.tree.root_node(), text.as_bytes());
+        let mut matches = cursor.matches(query, self.tree().root_node(), text.as_bytes());
         while let Some(pair) = matches.next() {
             for capture in pair.captures() {
                 if capture.index == open {

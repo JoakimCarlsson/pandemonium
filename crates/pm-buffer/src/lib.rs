@@ -9,7 +9,12 @@
 //! [`Reach`] says how much a press takes hold of: a point, a word or a line.
 //! [`word_at`] finds the word around a place in a text, the characters of
 //! each [`Class`] making up one word.
+//!
+//! A [`Step`] is a change together with what it took away, so that it can be
+//! taken back and several of them told as one; a [`Worker`] is a thread that
+//! runs work handed to it in turn, away from the thread that draws.
 
+mod background;
 mod buffer;
 mod change;
 mod lines;
@@ -17,8 +22,9 @@ mod position;
 mod reach;
 mod word;
 
+pub use background::Worker;
 pub use buffer::Buffer;
-pub use change::Change;
+pub use change::{Change, Step};
 pub use lines::Lines;
 pub use position::{Position, Span};
 pub use reach::Reach;

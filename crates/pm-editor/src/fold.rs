@@ -1,6 +1,7 @@
 //! Folding: the lines between the first and the last of a block hidden away, the first line standing for them, and the rows the lines that show are drawn in.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use pm_buffer::Change;
 
@@ -15,6 +16,17 @@ pub struct Fold {
     pub tail: usize,
 }
 
+/// The lines the folds hide, as worked out last for a revision of the text and the folds as they were.
+#[derive(Debug, Default)]
+pub(crate) struct Hidden {
+    /// The revision of the text.
+    revision: u64,
+    /// The folds.
+    folds: Vec<Fold>,
+    /// The lines they hide, in order and not overlapping.
+    lines: Arc<Vec<Range<usize>>>,
+}
+
 /// Where the byte `offset` of the text before `change` is after it, or nothing when the change replaced it.
 fn shifted(offset: usize, change: &Change) -> Option<usize> {
     if offset < change.range.start {
@@ -26,9 +38,45 @@ fn shifted(offset: usize, change: &Change) -> Option<usize> {
     }
 }
 
+/// The line in row `row` when the lines `hidden` hide, in order and not overlapping, are left out: past the last line when there are fewer rows.
+fn line_in_row(hidden: &[Range<usize>], row: usize) -> usize {
+    let mut index = row;
+    for gap in hidden {
+        if gap.start <= index {
+            index += gap.len();
+        } else {
+            break;
+        }
+    }
+    index
+}
+
 impl Document {
     /// The lines each fold hides, by index, in order and not overlapping.
     pub fn hidden_lines(&self) -> Vec<Range<usize>> {
+        self.hidden().to_vec()
+    }
+
+    /// The lines each fold hides, by index, in order and not overlapping, worked out again only when the text or the folds changed.
+    pub(crate) fn hidden(&self) -> Arc<Vec<Range<usize>>> {
+        if self.folds.is_empty() {
+            return Arc::default();
+        }
+        let Ok(mut kept) = self.hidden.0.lock() else {
+            return Arc::new(self.work_out_hidden());
+        };
+        if kept.revision != self.field.revision() || kept.folds != self.folds {
+            *kept = Hidden {
+                revision: self.field.revision(),
+                folds: self.folds.clone(),
+                lines: Arc::new(self.work_out_hidden()),
+            };
+        }
+        kept.lines.clone()
+    }
+
+    /// The lines each fold hides, by index, in order and not overlapping, worked out from the folds.
+    fn work_out_hidden(&self) -> Vec<Range<usize>> {
         let mut hidden: Vec<Range<usize>> = self
             .folds
             .iter()
@@ -48,18 +96,13 @@ impl Document {
 
     /// How many rows the lines that show take.
     pub fn rows(&self) -> usize {
-        self.lines()
-            - self
-                .hidden_lines()
-                .iter()
-                .map(|lines| lines.len())
-                .sum::<usize>()
+        self.lines() - self.hidden().iter().map(|lines| lines.len()).sum::<usize>()
     }
 
     /// The row the line at `index` is drawn in; a hidden line is drawn in the row of the line that stands for it.
     pub fn row_of_line(&self, index: usize) -> usize {
         let mut row = index;
-        for lines in self.hidden_lines() {
+        for lines in self.hidden().iter() {
             if index >= lines.end {
                 row -= lines.len();
             } else if index >= lines.start {
@@ -71,12 +114,13 @@ impl Document {
 
     /// The lines that show, by index, from the one in row `first` until `count` of them.
     pub fn shown_lines(&self, first: usize, count: usize) -> Vec<usize> {
-        let hidden = self.hidden_lines();
-        let mut shown = Vec::with_capacity(count);
-        let mut row = 0;
-        let mut index = 0;
-        let mut gaps = hidden.iter().peekable();
-        while index < self.lines() && shown.len() < count {
+        let hidden = self.hidden();
+        let total = self.lines();
+        let mut index = line_in_row(&hidden, first);
+        let from = index;
+        let mut gaps = hidden.iter().skip_while(|gap| gap.end <= from).peekable();
+        let mut shown = Vec::with_capacity(count.min(total.saturating_sub(index)));
+        while index < total && shown.len() < count {
             if let Some(gap) = gaps.peek()
                 && index == gap.start
             {
@@ -84,13 +128,16 @@ impl Document {
                 gaps.next();
                 continue;
             }
-            if row >= first {
-                shown.push(index);
-            }
-            row += 1;
+            shown.push(index);
             index += 1;
         }
         shown
+    }
+
+    /// The line that shows in row `row`, when one does.
+    pub fn shown_line(&self, row: usize) -> Option<usize> {
+        let index = line_in_row(&self.hidden(), row);
+        (index < self.lines()).then_some(index)
     }
 
     /// Whether the line at `index` stands for lines folded away after it.

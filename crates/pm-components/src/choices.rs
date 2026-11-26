@@ -193,8 +193,10 @@ impl WorkspaceState {
             .file_listings
             .iter()
             .find(|listing| Some(&listing.key) == key.as_ref());
-        self.files = cached.map_or_else(Vec::new, |listing| listing.files.clone());
-        self.tree_folders = cached.map_or_else(Vec::new, |listing| listing.folders.clone());
+        self.files
+            .set(cached.map_or_else(Vec::new, |listing| listing.files.clone()));
+        self.tree_folders
+            .set(cached.map_or_else(Vec::new, |listing| listing.folders.clone()));
         self.tree_ignored = cached.map_or_else(Default::default, |listing| listing.ignored.clone());
         self.files_of = key.clone();
         if let (Some((host, directory)), Some(key)) = (wanted, key) {
@@ -232,8 +234,8 @@ impl WorkspaceState {
         self.file_listings.push_front(listing.clone());
         self.file_listings.truncate(16);
         if self.files_of.as_deref() == Some(key) {
-            self.files = listing.files.clone();
-            self.tree_folders = listing.folders.clone();
+            self.files.set(listing.files.clone());
+            self.tree_folders.set(listing.folders.clone());
             self.tree_ignored = listing.ignored.clone();
         }
         self
@@ -1407,8 +1409,8 @@ mod file_listing_tests {
         state.sessions[0].directory = directory;
         state.outbox.clear();
         state.refresh_files();
-        assert_eq!(state.files, ["updated.rs"]);
-        assert_eq!(state.tree_folders, ["empty"]);
+        assert_eq!(*state.files, ["updated.rs"]);
+        assert_eq!(*state.tree_folders, ["empty"]);
         assert!(state.tree_ignored.contains("updated.rs"));
         assert!(!state.files_loading());
         assert!(

@@ -105,6 +105,7 @@ pub mod language_offer;
 pub mod lazy_diffs;
 pub mod lightbulb;
 pub mod line_edits;
+pub mod listed;
 pub mod listing;
 pub mod markdown;
 pub mod marked;

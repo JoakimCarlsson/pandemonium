@@ -200,6 +200,26 @@ pub(crate) fn figure_marks(source: &str, place: Option<&str>, figures: &Figures)
         .collect()
 }
 
+/// What `figures` holds for each figure among the parsed `blocks` named by a file at `place`, as [`figure_marks`] gives it for the source they were parsed from, without parsing it again.
+pub(crate) fn block_figure_marks<'b>(
+    blocks: impl IntoIterator<Item = &'b Block>,
+    place: Option<&str>,
+    figures: &Figures,
+) -> Vec<u64> {
+    let mut found = Vec::new();
+    for block in blocks {
+        collect(std::slice::from_ref(block), place, &mut found);
+    }
+    found
+        .iter()
+        .map(|(key, _)| match figures.get(key) {
+            None => 0,
+            Some(Ok(drawing)) => drawing.picture.id(),
+            Some(Err(_)) => 1,
+        })
+        .collect()
+}
+
 /// Emits `drawing` `across` by `down` logical pixels, with `modifier` around it.
 #[track_caller]
 fn drawn(modifier: Modifier, drawing: &Drawing, across: f32, down: f32) {

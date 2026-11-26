@@ -136,14 +136,65 @@ fn blocks(text: &str, spans: &[(std::ops::Range<usize>, Kind)], tab: usize) -> (
     (roles.len(), marks)
 }
 
+/// The highlighted stretches of a line, as offsets into it.
+type Spans = Vec<(std::ops::Range<usize>, Kind)>;
+
+/// The blocks of a line worked out last: for the line's text and the tab width they were worked out at, the highlights they were worked out from, and how many columns the line took with its blocks.
+type KeptBlocks = (String, usize, Spans, usize, Vec<Mark>);
+
+/// Spaces for the text of a row of the minimap, which a row takes a piece of.
+const SPACES: &str = "                                                                                                                                ";
+
+thread_local! {
+    /// The blocks of the lines drawn last, by line, so that a line whose text and highlights did not change is not worked out again.
+    static BLOCKS: std::cell::RefCell<std::collections::HashMap<usize, KeptBlocks>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// The blocks of line `index` of `document`, whose highlighted stretches are `spans`, as [`blocks`] gives them, kept from the last time when neither the line's text nor its highlights changed since.
+fn kept_blocks(
+    document: &Document,
+    index: usize,
+    spans: &[(std::ops::Range<usize>, Kind)],
+) -> (usize, Vec<Mark>) {
+    let text = &document.field.text()[document.line(index)];
+    let tab = document.editing.indent;
+    BLOCKS.with(|kept| {
+        let mut kept = kept.borrow_mut();
+        if let Some((held_text, held_tab, held_spans, width, marks)) = kept.get(&index)
+            && held_text == text
+            && *held_tab == tab
+            && held_spans.as_slice() == spans
+        {
+            return (*width, marks.clone());
+        }
+        let (width, marks) = blocks(text, spans, tab);
+        if kept.len() > 4096 {
+            kept.clear();
+        }
+        kept.insert(
+            index,
+            (text.to_owned(), tab, spans.to_vec(), width, marks.clone()),
+        );
+        (width, marks)
+    })
+}
+
 /// Emits the line at `index` of `document` as a row of the minimap.
 #[track_caller]
 fn row_of(document: &Document, index: usize, spans: &[(std::ops::Range<usize>, Kind)]) {
-    let line = document.line(index);
-    let (width, marks) = blocks(&document.field.text()[line], spans, document.editing.indent);
+    let (width, marks) = kept_blocks(document, index, spans);
+    let repeated;
+    let content = match SPACES.get(..width) {
+        Some(spaces) => spaces,
+        None => {
+            repeated = " ".repeat(width);
+            &repeated
+        }
+    };
     marked_line(
         Modifier::new().height(ROW),
-        &" ".repeat(width),
+        content,
         theme::code_style(FONT, ROW / FONT).color(theme::color(Color::TRANSPARENT)),
         marks,
         CaretLook::default(),

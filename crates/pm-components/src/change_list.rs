@@ -465,25 +465,57 @@ fn rows_of(
     }
 }
 
-/// Emits the rows of the changes of `session` in the repository the panel works on: each group that has files, under its heading, as a tree of folders.
-#[track_caller]
-pub fn rows(state: &WorkspaceState, session: &Session) {
-    let repository = state.git.repository.as_deref();
-    let mut counter = 0;
-    for group in Group::ALL {
-        let files = members(&session.changes, group, repository);
-        if files.is_empty() {
-            continue;
-        }
-        heading(&session.changes, group, repository);
-        rows_of(
-            state,
-            session,
-            &tree(&session.changes, &files, repository),
-            group,
-            &files,
-            0,
-            &mut counter,
-        );
+/// The groups of the changes of `session` in the repository the panel works on that have
+/// files, in the order they are listed, each with its files, their tree and the number its
+/// first folder is counted from.
+pub struct Groups {
+    /// Each group that has files, its files by position among the changes, their tree and the
+    /// number of its first folder among every group's folders.
+    groups: Vec<(Group, Vec<usize>, Vec<Entry>, usize)>,
+}
+
+impl Groups {
+    /// The groups of the changes of `session` that have files, in the repository of `state`'s
+    /// panel.
+    pub fn of(state: &WorkspaceState, session: &Session) -> Self {
+        let repository = state.git.repository.as_deref();
+        let mut counter = 0;
+        let groups = Group::ALL
+            .into_iter()
+            .filter_map(|group| {
+                let files = members(&session.changes, group, repository);
+                if files.is_empty() {
+                    return None;
+                }
+                let entries = tree(&session.changes, &files, repository);
+                let first = counter;
+                counter += folders(&entries).len();
+                Some((group, files, entries, first))
+            })
+            .collect();
+        Self { groups }
+    }
+
+    /// How many groups have files.
+    pub fn len(&self) -> usize {
+        self.groups.len()
+    }
+
+    /// Whether no group has files.
+    pub fn is_empty(&self) -> bool {
+        self.groups.is_empty()
+    }
+
+    /// Emits the group at `place` of those that have files: its heading over the rows of its
+    /// tree.
+    #[track_caller]
+    pub fn emit(&self, state: &WorkspaceState, session: &Session, place: usize) {
+        let Some((group, files, entries, first)) = self.groups.get(place) else {
+            return;
+        };
+        let repository = state.git.repository.as_deref();
+        let mut counter = *first;
+        heading(&session.changes, *group, repository);
+        rows_of(state, session, entries, *group, files, 0, &mut counter);
     }
 }

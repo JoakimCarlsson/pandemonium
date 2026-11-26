@@ -46,8 +46,11 @@ mod text;
 mod transform;
 mod wrap;
 
+#[cfg(test)]
+mod tests;
+
 pub use annotations::{Hint, Lens, Swatch};
-pub use document::{Completions, Document, HoverCard};
+pub use document::{Completions, Document, HoverCard, Pending};
 pub use edit::Edited;
 pub use find::Query;
 pub use fold::Fold;
@@ -59,6 +62,6 @@ pub use settings::{
     VimClipboard,
 };
 pub use snippet::{Expansion, UserSnippet};
-pub use text::{Edit, Field, Motion};
+pub use text::{Edit, Field, Motion, Taken};
 pub use transform::{Case, LineOrder};
 pub use wrap::segments;

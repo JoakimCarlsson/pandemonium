@@ -150,7 +150,7 @@ fn the_conversation_keeps_its_place_from_the_end() {
 /// How far the sidebar's list is scrolled, and how far it can go.
 fn sidebar(rig: &Rig) -> (f32, f32) {
     rig.state(|state| {
-        let scroll = &state.sidebar_scroll;
+        let scroll = state.sidebar_scroll.scroll();
         (scroll.offset(), scroll.max_offset())
     })
 }

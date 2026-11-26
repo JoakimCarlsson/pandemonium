@@ -54,7 +54,7 @@ impl Buffer {
             text: text.to_owned(),
         };
         change.apply(&mut self.text);
-        self.lines = Lines::new(&self.text);
+        self.lines.splice(&change);
         change
     }
 

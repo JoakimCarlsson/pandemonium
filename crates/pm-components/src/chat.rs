@@ -394,6 +394,12 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                     .map(|place| place - base)
                     .collect();
                 Markdown::new(piece, width)
+                    .identity(crate::figures::key_of((
+                        "chat",
+                        session.scope,
+                        index,
+                        number,
+                    )))
                     .details(
                         Target::Chat(ChatEvent::Details {
                             message: index,

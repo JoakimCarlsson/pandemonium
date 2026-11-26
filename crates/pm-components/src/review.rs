@@ -40,18 +40,30 @@ pub const WIDTH: f32 = 380.0;
 /// How narrow and how wide the review panel can be dragged, in logical pixels.
 pub const WIDTHS: (f32, f32) = (260.0, 760.0);
 
-/// Emits the box that holds the rows of the panel's list, which `content` emits, and scrolls them.
-fn scrolling_list(state: &WorkspaceState, content: impl FnOnce()) {
-    rustle::column_arranged(
-        Modifier::new()
-            .fill_max_width()
-            .weight(1.0)
-            .vertical_scroll(&state.tree_scroll)
-            .fill_max_width()
-            .padding_xy(0.0, theme::sp(1)),
-        Arrangement::Start,
-        Alignment::Start,
-        content,
+/// Emits the panel's list of the changes of `session` as a lazy list that scrolls them,
+/// composing only the groups in view: each group that has files under its heading, or a line
+/// saying there are none.
+fn changes_list(state: &WorkspaceState, session: &Session) {
+    let groups = change_list::Groups::of(state, session);
+    let none = session.changes.is_empty();
+    let count = groups.len() + usize::from(none);
+    rustle::lazy_list_with(
+        Modifier::new().fill_max_width().weight(1.0),
+        &state.tree_scroll,
+        rustle::LazyContent::new().padding_each(theme::sp(1), theme::sp(1)),
+        count,
+        |index| index,
+        |index| {
+            rustle::column_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::Start,
+                Alignment::Start,
+                || match index < groups.len() {
+                    true => groups.emit(state, session, index),
+                    false => nothing("No uncommitted changes."),
+                },
+            );
+        },
     );
 }
 
@@ -392,12 +404,7 @@ fn changes(state: &WorkspaceState, session: &Session) {
                             message_box(state);
                             commit_button(state, &primary);
                         }
-                        scrolling_list(state, || {
-                            change_list::rows(state, session);
-                            if session.changes.is_empty() {
-                                nothing("No uncommitted changes.");
-                            }
-                        });
+                        changes_list(state, session);
                     } else {
                         spacer();
                     }

@@ -18,7 +18,7 @@ impl Syntax {
         let mut cursor = QueryCursor::new();
         cursor.set_byte_range(window.clone());
         let mut found: Vec<(Range<usize>, String)> = Vec::new();
-        let mut captures = cursor.captures(query, self.tree.root_node(), text.as_bytes());
+        let mut captures = cursor.captures(query, self.tree().root_node(), text.as_bytes());
         while let Some((held, index)) = captures.next() {
             let capture = held.captures()[*index];
             let range = capture.node.byte_range();
@@ -41,7 +41,7 @@ impl Syntax {
         let mut cursor = QueryCursor::new();
         cursor.set_byte_range(offset.saturating_sub(1)..(offset + 1).min(text.len()));
         let mut best: Option<Range<usize>> = None;
-        let mut captures = cursor.captures(query, self.tree.root_node(), text.as_bytes());
+        let mut captures = cursor.captures(query, self.tree().root_node(), text.as_bytes());
         while let Some((held, index)) = captures.next() {
             let capture = held.captures()[*index];
             let range = capture.node.byte_range();

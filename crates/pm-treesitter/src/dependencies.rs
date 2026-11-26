@@ -51,7 +51,7 @@ impl Syntax {
         };
         let mut cursor = QueryCursor::new();
         let mut found: Vec<Dependency> = Vec::new();
-        let mut matches = cursor.matches(query, self.tree.root_node(), text.as_bytes());
+        let mut matches = cursor.matches(query, self.tree().root_node(), text.as_bytes());
         while let Some(held) = matches.next() {
             let node = |index| {
                 held.captures()

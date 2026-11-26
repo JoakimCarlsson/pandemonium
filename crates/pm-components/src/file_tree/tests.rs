@@ -120,8 +120,8 @@ fn the_space_under_the_rows_fills_the_view() {
 #[test]
 fn folder_expansion_and_file_changes() {
     let mut state = sample(0);
-    state.files = vec!["src/b.rs".to_owned(), "src/a.rs".to_owned()];
-    state.tree_folders = vec!["empty".to_owned()];
+    state.files = vec!["src/b.rs".to_owned(), "src/a.rs".to_owned()].into();
+    state.tree_folders = vec!["empty".to_owned()].into();
     assert_eq!(
         shown_rows(&state.files, &state.tree_folders, &state.open_tree).len(),
         2

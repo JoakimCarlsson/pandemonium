@@ -305,8 +305,9 @@ pub struct Message {
     pub open: Option<bool>,
     /// How many steps the reply had when its text last grew, to tell when new words follow a step.
     pub said_after: usize,
-    /// The pieces of the text as the agent said them, each with how many steps came before it.
-    pub said: Vec<(usize, String)>,
+    /// The pieces of the text as the agent said them, each with how many steps came before it
+    /// and where in the text it lies, as a range of bytes.
+    pub said: Vec<(usize, std::ops::Range<usize>)>,
     /// The files the reader sent with it, by path.
     pub attachments: Vec<String>,
     /// Whether the server kept the files as they were before the reader's turn, so they can be put back.
@@ -521,7 +522,7 @@ impl Message {
         }
         self.said
             .iter()
-            .map(|(before, piece)| (*before, piece.as_str()))
+            .filter_map(|(before, range)| Some((*before, self.text.get(range.clone())?)))
             .collect()
     }
 }

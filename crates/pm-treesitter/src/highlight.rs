@@ -176,7 +176,7 @@ impl Syntax {
     pub fn highlights(&self, text: &str, window: Range<usize>) -> Vec<Highlight> {
         let window = window.start.min(text.len())..window.end.min(text.len());
         let mut canvas = Canvas::new(&window);
-        canvas.paint_tree(self.grammar(), &self.tree, text, 0);
+        canvas.paint_tree(self.grammar(), self.tree(), text, 0);
         canvas.highlights()
     }
 }

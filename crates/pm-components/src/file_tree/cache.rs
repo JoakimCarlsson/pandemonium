@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use crate::listed::Listed;
 use crate::tree::{Entry, Layout, build};
 
 /// How many recently displayed projects or sessions retain their hierarchy.
@@ -17,6 +18,8 @@ struct Cached {
     folders: Vec<String>,
     /// The sorted hierarchy built from these paths.
     entries: Arc<Vec<Entry>>,
+    /// The generations of the listed files and folders last found to hold these paths.
+    generations: Option<(u64, u64)>,
 }
 
 thread_local! {
@@ -53,10 +56,33 @@ pub(super) fn tree(files: &[String], folders: &[String]) -> Arc<Vec<Entry>> {
             files: files.to_vec(),
             folders: folders.to_vec(),
             entries: entries.clone(),
+            generations: None,
         });
         trees.truncate(CAPACITY);
         entries
     })
+}
+
+/// Gets the hierarchy of the listed `files` and `folders`, found by their generations without
+/// comparing their paths when they have not changed since it was last asked for.
+pub(super) fn tree_of(files: &Listed, folders: &Listed) -> Arc<Vec<Entry>> {
+    let generations = Some((files.generation(), folders.generation()));
+    let found = TREES.with_borrow(|trees| {
+        trees
+            .iter()
+            .find(|tree| tree.generations == generations)
+            .map(|tree| tree.entries.clone())
+    });
+    if let Some(entries) = found {
+        return entries;
+    }
+    let entries = tree(files, folders);
+    TREES.with_borrow_mut(|trees| {
+        if let Some(front) = trees.front_mut() {
+            front.generations = generations;
+        }
+    });
+    entries
 }
 
 #[cfg(test)]

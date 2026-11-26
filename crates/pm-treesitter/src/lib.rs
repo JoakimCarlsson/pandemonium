@@ -40,4 +40,4 @@ pub use kind::Kind;
 pub use objects::{ObjectSpan, TextObject};
 pub use outline::Item;
 pub use runnables::Runnable;
-pub use syntax::Syntax;
+pub use syntax::{Parsing, Reparsed, Syntax};
