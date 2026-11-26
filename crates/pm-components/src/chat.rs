@@ -359,7 +359,12 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
             let mut shown = 0;
             let mut recorded = 0;
             let mut exhibited = 0;
-            for (number, (before, piece)) in message.chunks().into_iter().enumerate() {
+            let chunks = message.chunks();
+            let pieces = chunks.len();
+            let writing = session.status == Status::Working
+                && message.duration.is_none()
+                && index + 1 == session.messages.len();
+            for (number, (before, piece)) in chunks.into_iter().enumerate() {
                 let before = before.min(message.steps.len());
                 while let Some((at, exhibit)) = message
                     .exhibits
@@ -393,7 +398,11 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                     .filter(|place| (base..base + FOLDS_PER_PIECE).contains(place))
                     .map(|place| place - base)
                     .collect();
-                Markdown::new(piece, width)
+                let streaming = writing && number + 1 == pieces;
+                let shown =
+                    rustle::key(("pace", number), || crate::pacing::paced(piece, streaming));
+                Markdown::new(&piece[..shown.len], width)
+                    .fade(shown.fades)
                     .identity(crate::figures::key_of((
                         "chat",
                         session.scope,

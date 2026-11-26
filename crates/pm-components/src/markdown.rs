@@ -64,6 +64,9 @@ pub struct Markdown<'a> {
     /// What the caller knows the source by, such as a message and its piece, when it keeps
     /// its parse across builds so a source that grows is parsed again only from its last block.
     identity: Option<u64>,
+    /// The characters at the end of the source that fade in, as [`crate::pacing::Shown`]
+    /// gives them: how many characters from the end each run starts, with its opacity.
+    fade: Vec<(usize, f32)>,
 }
 
 impl<'a> Markdown<'a> {
@@ -80,7 +83,16 @@ impl<'a> Markdown<'a> {
             figures: None,
             place: None,
             identity: None,
+            fade: Vec::new(),
         }
+    }
+
+    /// The last characters of the source faded in as `fade` says: each run, given as how many
+    /// characters from the end it starts with its opacity from 0 to 1, drawn that opaque until
+    /// the next run starts. Only the running text of the last block fades.
+    pub fn fade(mut self, fade: Vec<(usize, f32)>) -> Self {
+        self.fade = fade;
+        self
     }
 
     /// The source known by `identity`, which stays the same while the source grows, as a reply
@@ -156,6 +168,7 @@ impl<'a> Markdown<'a> {
             self.links,
             &drawn,
             self.place,
+            fade_key(&self.fade),
         ));
         let width = self.width;
         rustle::column_arranged(
@@ -201,6 +214,7 @@ impl<'a> Markdown<'a> {
             self.links,
             &drawn,
             self.place,
+            fade_key(&self.fade),
         ));
         let width = self.width;
         rustle::column_arranged(
@@ -216,12 +230,20 @@ impl<'a> Markdown<'a> {
     }
 
     /// Emits `blocks`, each with a hash of itself, as the blocks of the source, each kept for
-    /// as long as it, how it is set and the figures `drawn` stay the same.
+    /// as long as it, how it is set and the figures `drawn` stay the same; the last block
+    /// also for as long as how its end fades does.
     #[track_caller]
     fn emit_blocks<'b>(&self, blocks: impl Iterator<Item = (&'b Block, u64)>, drawn: &[u64]) {
         let width = self.width;
         let mut seen = 0;
-        for (block, hash) in blocks {
+        let blocks: Vec<(&Block, u64)> = blocks.collect();
+        let last = blocks.len().saturating_sub(1);
+        for (place, (block, hash)) in blocks.into_iter().enumerate() {
+            let fade = if place == last {
+                self.fade.clone()
+            } else {
+                Vec::new()
+            };
             let first = seen;
             seen += count_details(std::slice::from_ref(block));
             let unfolded: Vec<usize> = self
@@ -239,6 +261,7 @@ impl<'a> Markdown<'a> {
                 &unfolded,
                 self.links,
                 drawn,
+                fade_key(&fade),
             ));
             rustle::key(key, || {
                 rustle::kept((key, width.to_bits()), || {
@@ -250,6 +273,7 @@ impl<'a> Markdown<'a> {
                         links: self.links,
                         figures: self.figures,
                         place: self.place,
+                        fade: Some(fade).filter(|fade| !fade.is_empty()),
                     }
                     .block(block, self.tone, width);
                 });
@@ -274,6 +298,9 @@ struct Layout<'s> {
     figures: Option<&'s Figures>,
     /// The markdown file the source is, which the paths of its images start from.
     place: Option<&'s str>,
+    /// How the end of the running text fades in, for the text that ends the block being laid
+    /// out, as [`Markdown::fade`] gives it.
+    fade: Option<Vec<(usize, f32)>>,
 }
 
 impl Layout<'_> {
@@ -283,7 +310,7 @@ impl Layout<'_> {
     }
 
     /// Emits `blocks` one under the other, `gap` steps apart, in a column with
-    /// `modifier`, `width` wide, running text in `tone`.
+    /// `modifier`, `width` wide, running text in `tone`; the fade of the end goes to the last.
     #[track_caller]
     fn blocks(&mut self, modifier: Modifier, gap: f32, blocks: &[Block], tone: Role, width: f32) {
         rustle::column_arranged(
@@ -291,9 +318,15 @@ impl Layout<'_> {
             Arrangement::SpacedBy(theme::sp(gap)),
             Alignment::Start,
             || {
-                for block in blocks {
+                let fade = self.fade.take();
+                let last = blocks.len().saturating_sub(1);
+                for (place, block) in blocks.iter().enumerate() {
+                    if place == last {
+                        self.fade = fade.clone();
+                    }
                     self.block(block, tone, width);
                 }
+                self.fade = None;
             },
         );
     }
@@ -303,7 +336,15 @@ impl Layout<'_> {
     fn block(&mut self, block: &Block, tone: Role, width: f32) {
         match block {
             Block::Paragraph(spans) => {
-                self.text(Modifier::new(), spans, self.pixels, false, tone, width)
+                let fade = self.fade.take();
+                self.text_fading(
+                    Modifier::new(),
+                    spans,
+                    (self.pixels, false),
+                    tone,
+                    width,
+                    fade,
+                )
             }
             Block::Heading { level, spans } => {
                 let pixels = match level {
@@ -312,7 +353,8 @@ impl Layout<'_> {
                     3 => self.pixels + 1,
                     _ => self.pixels,
                 };
-                self.text(Modifier::new(), spans, pixels, true, tone, width);
+                let fade = self.fade.take();
+                self.text_fading(Modifier::new(), spans, (pixels, true), tone, width, fade);
             }
             Block::List { start, items } => self.list(*start, items, tone, width),
             Block::Code { language, text } if is_diagram(language) => self.figure(
@@ -435,7 +477,8 @@ impl Layout<'_> {
         );
     }
 
-    /// Emits a list of `items`, numbered from `start` when it is ordered and dotted when not.
+    /// Emits a list of `items`, numbered from `start` when it is ordered and dotted when not;
+    /// the fade of the block's end goes to its last item.
     #[track_caller]
     fn list(&mut self, start: Option<u64>, items: &[Vec<Block>], tone: Role, width: f32) {
         let height = self.line_height();
@@ -445,7 +488,11 @@ impl Layout<'_> {
             Arrangement::SpacedBy(theme::sp(1.5)),
             Alignment::Start,
             || {
+                let fade = self.fade.take();
                 for (index, item) in items.iter().enumerate() {
+                    if index + 1 == items.len() {
+                        self.fade = fade.clone();
+                    }
                     rustle::row_arranged(
                         Modifier::new(),
                         Arrangement::Start,
@@ -606,9 +653,29 @@ impl Layout<'_> {
         tone: Role,
         width: f32,
     ) {
+        self.text_fading(modifier, spans, (pixels, strong), tone, width, None);
+    }
+
+    /// Emits `spans` as [`Layout::text`] does, set in `type` (how tall the type is and whether
+    /// it is heavier throughout), the running text at its end faded in as `fade` says, when
+    /// it is given.
+    #[track_caller]
+    fn text_fading(
+        &mut self,
+        modifier: Modifier,
+        spans: &[Span],
+        (pixels, strong): (u32, bool),
+        tone: Role,
+        width: f32,
+        fade: Option<Vec<(usize, f32)>>,
+    ) {
+        let total: usize = spans.iter().map(|span| span.text.chars().count()).sum();
+        let mut passed = 0;
         let mut builder = rustle::AnnotatedStringBuilder::new();
         let mut chips = std::collections::HashMap::new();
         for span in spans {
+            let before = passed;
+            passed += span.text.chars().count();
             if span.inline.code {
                 let index = self
                     .link(span.inline, tone)
@@ -626,11 +693,24 @@ impl Layout<'_> {
                 }
                 continue;
             }
+            let runs = faded_runs(&span.text, total - before, fade.as_deref());
+            let colour = running_colour(span.inline, tone);
+            let append = |builder: &mut rustle::AnnotatedStringBuilder| {
+                for (run, alpha) in &runs {
+                    match alpha {
+                        None => builder.append(run),
+                        Some(alpha) => {
+                            let faded = colour.copy(colour.alpha() * alpha);
+                            builder.with_style(rustle::SpanStyle::new().color(faded), |builder| {
+                                builder.append(run)
+                            })
+                        }
+                    }
+                }
+            };
             match self.link(span.inline, tone) {
-                Some(link) => builder.with_link(link, |builder| builder.append(&span.text)),
-                None => builder.with_style(running(span.inline, tone), |builder| {
-                    builder.append(&span.text)
-                }),
+                Some(link) => builder.with_link(link, append),
+                None => builder.with_style(running(span.inline, tone), append),
             }
         }
         let text = builder.to_annotated_string();
@@ -812,6 +892,54 @@ fn chip(
         let code = code.to_owned();
         rustle::disable_selection(|| chip_text(code, inline, pixels, strong, tone));
     })
+}
+
+/// `text`, whose first character lies `from_end` characters from the end of the text it is
+/// part of, cut into runs that each fade the same as `fade` says: each with its opacity, or
+/// nothing for a run drawn fully opaque. One run of all of it when nothing fades.
+fn faded_runs(
+    text: &str,
+    from_end: usize,
+    fade: Option<&[(usize, f32)]>,
+) -> Vec<(String, Option<f32>)> {
+    let Some(fade) = fade.filter(|fade| {
+        fade.first()
+            .is_some_and(|(far, _)| *far + 1 > from_end - text.chars().count())
+    }) else {
+        return vec![(text.to_owned(), None)];
+    };
+    let alpha_at = |distance: usize| {
+        fade.iter()
+            .rev()
+            .find(|(far, _)| *far >= distance)
+            .map(|(_, alpha)| *alpha)
+    };
+    let mut runs: Vec<(String, Option<f32>)> = Vec::new();
+    for (offset, character) in text.chars().enumerate() {
+        let alpha = alpha_at(from_end - offset);
+        match runs.last_mut() {
+            Some((run, held)) if *held == alpha => run.push(character),
+            _ => runs.push((character.to_string(), alpha)),
+        }
+    }
+    runs
+}
+
+/// The colour running text set as `inline` over text in `tone` is drawn in: the muted
+/// colour when struck, the accent of a link, and `tone` otherwise.
+fn running_colour(inline: Inline, tone: Role) -> rustle::Color {
+    match inline {
+        Inline { strike: true, .. } => theme::color(Role::Muted),
+        Inline { link: true, .. } => theme::color(Role::Accent),
+        _ => theme::color(tone),
+    }
+}
+
+/// A key for how the end of a text fades, `fade`, as runs from the end and their opacities.
+fn fade_key(fade: &[(usize, f32)]) -> Vec<(usize, u32)> {
+    fade.iter()
+        .map(|(far, alpha)| (*far, alpha.to_bits()))
+        .collect()
 }
 
 /// The style of running text set as `inline` over text in `tone`: heavier, leaning, struck
@@ -1247,5 +1375,30 @@ mod parsed {
             assert_eq!(parse(0xbeef, "Hello.").generation, first);
             assert_ne!(parse(0xbeef, "Hello. More.").generation, first);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Text far from the end is one run drawn opaque, and the characters at the end are cut
+    /// into runs by how they fade, the last the faintest.
+    #[test]
+    fn the_end_of_a_text_is_cut_by_its_fade() {
+        let fade = [(4, 0.5), (2, 0.25)];
+        assert_eq!(
+            faded_runs("early", 20, Some(&fade)),
+            vec![("early".to_owned(), None)]
+        );
+        assert_eq!(
+            faded_runs("abcdef", 6, Some(&fade)),
+            vec![
+                ("ab".to_owned(), None),
+                ("cd".to_owned(), Some(0.5)),
+                ("ef".to_owned(), Some(0.25)),
+            ]
+        );
+        assert_eq!(faded_runs("abc", 3, None), vec![("abc".to_owned(), None)]);
     }
 }
