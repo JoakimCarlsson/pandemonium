@@ -28,7 +28,7 @@ pm-transport.workspace = true
 pm-browser = { path = "../pm-browser" }
 pm-update.workspace = true
 pm-vim.workspace = true
-rustle = { git = "https://github.com/JoakimCarlsson/rustle", tag = "0.1.1" }
+rustle = { git = "https://github.com/JoakimCarlsson/rustle", tag = "0.1.2" }
 pm-buffer.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
