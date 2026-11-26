@@ -745,6 +745,12 @@ pub enum BrowserEvent {
     BrowserNewPrivateTab,
     /// Shows the article of the page in reader view, or the page again when reader view shows.
     BrowserReader,
+    /// Opens or closes the panel of recipes, the browser scripts agents saved.
+    BrowserRecipes,
+    /// Lists the recipes again.
+    BrowserRecipesRefresh,
+    /// Runs a recipe, by its place in the panel's list.
+    BrowserRecipeRun(usize),
 }
 
 /// A press of a control of the settings window and the extensions page.

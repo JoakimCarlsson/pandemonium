@@ -123,6 +123,8 @@ class Page {
     this.viewport = null;
     /** @type {string | null} The user agent an agent set with `browser_emulate`, until it is reset. */
     this.userAgent = null;
+    /** @type {{ x: number, y: number } | null} Where an agent's click made like a person's last left the pointer, in CSS pixels of the top frame, so the next one glides from there. */
+    this.pointer = null;
     /** @type {InstanceType<typeof Restriction>} When the restriction on agent browsing applies to the page, and what it refused. */
     this.restriction = new Restriction();
     /** @type {boolean} Whether the window asked for the page to close, so the page's closing is not reported back to it. */

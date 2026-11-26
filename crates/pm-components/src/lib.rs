@@ -44,6 +44,7 @@ pub mod browser_pointing;
 pub mod browser_privacy;
 pub mod browser_profiles;
 pub mod browser_reader;
+pub mod browser_recipes;
 pub mod browser_safety;
 pub mod browser_scope;
 pub mod browser_steps;

@@ -15,6 +15,9 @@ impl WorkspaceState {
     /// The engine's name for the profile the page of the tab numbered `tab` lives in, or nothing for the shared one: the private profile for a private tab, and while each project has a profile of its own, the profile of the project the tab's browser belongs to.
     pub fn browser_partition(&self, tab: u32) -> Option<String> {
         let held = self.browser_tab_anywhere(tab)?;
+        if let Some(context) = &held.context {
+            return Some(context.clone());
+        }
         if held.private {
             return Some(PRIVATE_PARTITION.to_owned());
         }
@@ -24,13 +27,24 @@ impl WorkspaceState {
         self.browser_project(tab).map(project_partition)
     }
 
-    /// Makes the tab numbered `opened`, which the page of the tab numbered `opener` asked for, private when the opener is, so that a link or a window a private page opens stays in the private profile and is not kept.
+    /// Makes the tab numbered `opened` a page of the context whose profile is `partition`, which a script of an agent asked for.
+    pub fn browser_tab_in_context(&mut self, opened: u32, partition: String) {
+        if let Some(tab) = self.browser_tab(opened) {
+            tab.context = Some(partition);
+        }
+    }
+
+    /// Makes the tab numbered `opened`, which the page of the tab numbered `opener` asked for, private when the opener is and a page of the opener's context when it has one, so that a link or a window such a page opens stays in its profile and is not kept.
     pub fn browser_tab_inherit(&mut self, opener: u32, opened: u32) {
-        let private = self
+        let (private, context) = self
             .browser_tab_anywhere(opener)
-            .is_some_and(|tab| tab.private);
-        if private && let Some(tab) = self.browser_tab(opened) {
-            tab.private = true;
+            .map(|tab| (tab.private, tab.context.clone()))
+            .unwrap_or_default();
+        if let Some(tab) = self.browser_tab(opened) {
+            tab.private |= private;
+            if context.is_some() {
+                tab.context = context;
+            }
         }
     }
 

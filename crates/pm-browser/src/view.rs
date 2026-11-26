@@ -417,8 +417,8 @@ impl View {
         self.link.send(&Request::ClearData { page: self.page });
     }
 
-    /// The new windows the page asked for since the last call, each the address and whether a tool of an agent was running on the page when it asked.
-    pub fn take_opened(&self) -> Vec<(String, bool)> {
+    /// The new windows the page asked for since the last call, each the address, whether a tool of an agent was running on the page when it asked, and the profile a script's context asked the tab to live in.
+    pub fn take_opened(&self) -> Vec<(String, bool, Option<String>)> {
         self.state.take_opened()
     }
 

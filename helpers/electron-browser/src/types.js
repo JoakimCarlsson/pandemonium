@@ -346,7 +346,7 @@
  *   | { CertificateCleared: { page: number } }
  *   | { Download: { page: number, name: string, state: DownloadState } }
  *   | { Captured: { page: number, capture: Capture } }
- *   | { OpenRequested: { page: number, url: string, agent: boolean } }
+ *   | { OpenRequested: { page: number, url: string, agent: boolean, partition?: string } }
  *   | { HtmlRendered: { ticket: number, path: string, error: string } }
  *   | { Features: { features: string[] } }
  *   | { Loading: { page: number, loading: boolean, progress: number } }

@@ -12,6 +12,7 @@ const recording = require('./recording');
 const secrets = require('./secrets');
 const origins = require('./origins');
 const routing = require('./routing');
+const runner = require('./runner');
 
 /** @typedef {import('./page').Page} Page */
 /** @typedef {import('./types').Json} Json */
@@ -217,23 +218,63 @@ async function pointerAt(page, type, at) {
   page.contents.sendInputEvent({ type: type === 'mousePressed' ? 'mouseDown' : 'mouseUp', ...at, button: 'left', clickCount: 1, modifiers: [] });
 }
 
+/** How many steps the pointer takes on its way to a click made like a person's. */
+const HUMAN_STEPS = 14;
+
+/**
+ * Moves the pointer from where it last was to `to` along an eased path, a step every few milliseconds, as a hand on a mouse would.
+ * @param {Page} page The page, which keeps where its pointer is in `pointer`.
+ * @param {{ x: number, y: number }} to Where to, in CSS pixels of the top frame.
+ * @returns {Promise<void>} Settles once the pointer is there.
+ */
+async function glide(page, to) {
+  const from = page.pointer || { x: to.x - 120, y: to.y + 80 };
+  for (let step = 1; step <= HUMAN_STEPS; step += 1) {
+    const along = step / HUMAN_STEPS;
+    const eased = along < 0.5 ? 2 * along * along : 1 - (-2 * along + 2) ** 2 / 2;
+    const at = { x: Math.round(from.x + (to.x - from.x) * eased), y: Math.round(from.y + (to.y - from.y) * eased) };
+    await pointerAt(page, 'mouseMoved', windowPoint(page, at));
+    await pause(10 + Math.random() * 14);
+  }
+}
+
 /**
  * Clicks at a place in the page, as the reader would, and waits for what the click started: a page that loads, or requests that are under way.
  * @param {Page} page The page.
  * @param {number} x Across, in CSS pixels of the top frame.
  * @param {number} y Down, in CSS pixels of the top frame.
+ * @param {boolean} [human] Whether to glide the pointer there and linger before pressing and letting go, as a person does.
  * @returns {Promise<ToolOutcome>} The answer, saying what was hit and where the page is after.
  */
-async function clickAt(page, x, y) {
+async function clickAt(page, x, y, human = false) {
   const at = { x: Math.round(x), y: Math.round(y) };
   const hit = await evaluate(page, await world(page), `(${DESCRIBE})(${at.x}, ${at.y})`).catch(() => 'unknown');
   const sent = windowPoint(page, at);
+  if (human) await glide(page, at);
   await pointerAt(page, 'mouseMoved', sent);
+  if (human) await pause(60 + Math.random() * 80);
   await pointerAt(page, 'mousePressed', sent);
+  if (human) await pause(50 + Math.random() * 60);
   await pointerAt(page, 'mouseReleased', sent);
+  page.pointer = at;
   await new Promise((resolve) => setTimeout(resolve, CLICK_REACTS));
   await settled(page, CLICK_STILL, CLICK_SETTLING);
   return done(`Clicked ${hit} at ${at.x}, ${at.y}. The page is at ${page.contents.getURL()}.`);
+}
+
+/**
+ * Brings an element into view and gives its middle: at once, or for a click made like a person's, by scrolling smoothly and waiting for the scroll to stop.
+ * @param {Page} page The page.
+ * @param {string} element An expression that finds the element.
+ * @param {boolean} human Whether to scroll smoothly.
+ * @returns {Promise<Json>} `x` and `y`, or `error`.
+ */
+async function centreOf(page, element, human) {
+  const behavior = human ? 'smooth' : 'instant';
+  return inWorld(
+    page,
+    `(async () => { const el = ${element}; if (!el) return JSON.stringify({ error: ${JSON.stringify(NO_ELEMENT)} }); el.scrollIntoView({ block: 'center', inline: 'center', behavior: '${behavior}' }); if (${human}) { let last = -1; for (let i = 0; i < 40; i += 1) { await new Promise((r) => setTimeout(r, 50)); const now = window.scrollY + window.scrollX * 1e6; if (now === last) break; last = now; } } const r = el.getBoundingClientRect(); return JSON.stringify({ x: r.x + r.width / 2, y: r.y + r.height / 2 }); })()`,
+  );
 }
 
 /**
@@ -542,9 +583,34 @@ async function typeInto(page, args) {
   );
   if (found.error) return failed(found.error);
   if (found.kind) return failed(`A ${found.kind} cannot be typed in; use browser_select_option for a list and browser_click for a box.`);
-  await protocol(page).call('Input.insertText', { text: args.text });
+  const delay = Number.isFinite(args.delay_ms) ? Math.min(Math.max(Number(args.delay_ms), 0), 1000) : 0;
+  if (delay > 0) {
+    await typeKeys(page, args.text, delay);
+  } else {
+    await protocol(page).call('Input.insertText', { text: args.text });
+  }
   if (args.submit === true) pressEnter(page);
   return done('Typed.');
+}
+
+/**
+ * Types text one key at a time, each with its key press and release, waiting about `delay` milliseconds between keys, as a person types.
+ * @param {Page} page The page, whose field holding the keyboard takes the keys.
+ * @param {string} text What to type; a line break presses Enter.
+ * @param {number} delay About how long between keys, in milliseconds; each wait varies by a third either way.
+ * @returns {Promise<void>} Settles once every key is typed.
+ */
+async function typeKeys(page, text, delay) {
+  const cdp = protocol(page);
+  for (const character of text) {
+    if (character === '\n') {
+      pressEnter(page);
+    } else {
+      await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', key: character, text: character, unmodifiedText: character });
+      await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', key: character });
+    }
+    await pause(delay * (0.67 + Math.random() * 0.66));
+  }
 }
 
 /**
@@ -772,7 +838,7 @@ async function run(page, tool, args, caller) {
   delete args.tab;
   if (page.recorder) page.recorder.toolStarted();
   const dialogs = page.dialogs;
-  if (!dialogs) return execute(page, tool, args, caller);
+  if (!dialogs || tool === 'browser_run') return execute(page, tool, args, caller);
   if (tool === 'browser_handle_dialog') return answerDialog(page, dialogs, args);
   if (dialogs.pending && !WORKS_WITH_DIALOG.has(tool)) {
     return failed(`${tool} cannot run while a dialog stops the page.${dialogs.report()}`);
@@ -827,14 +893,12 @@ async function execute(page, tool, args, caller) {
     case 'browser_resize':
       return resize(page, args);
     case 'browser_click': {
-      if (typeof args.x === 'number' && typeof args.y === 'number') return clickAt(page, args.x, args.y);
+      const human = args.human === true;
+      if (typeof args.x === 'number' && typeof args.y === 'number') return clickAt(page, args.x, args.y, human);
       const element = target(args);
       if (!element) return failed('name an element with ref or selector, or give x and y');
-      const found = await inWorld(
-        page,
-        `(() => { const el = ${element}; if (!el) return JSON.stringify({ error: 'no such element; take a new browser_snapshot' }); el.scrollIntoView({ block: 'center', inline: 'center' }); const r = el.getBoundingClientRect(); return JSON.stringify({ x: r.x + r.width / 2, y: r.y + r.height / 2 }); })()`,
-      );
-      if (typeof found.x === 'number' && typeof found.y === 'number') return clickAt(page, found.x, found.y);
+      const found = await centreOf(page, element, human);
+      if (typeof found.x === 'number' && typeof found.y === 'number') return clickAt(page, found.x, found.y, human);
       return failed(found.error || 'the element could not be found');
     }
     case 'browser_type':
@@ -912,6 +976,8 @@ async function execute(page, tool, args, caller) {
       return inspect.cdpTool(page, args);
     case 'browser_record':
       return recording.recordTool(args, undefined, caller);
+    case 'browser_run':
+      return runner.runTool(page, args, caller || { session: '', name: '' }, run);
     case 'browser_emulate':
       return inspect.emulateTool(page, args);
     case 'browser_wait': {

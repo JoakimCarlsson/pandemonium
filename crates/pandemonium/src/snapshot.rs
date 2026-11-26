@@ -258,6 +258,8 @@ pub enum Shot {
     BrowserPrimaryUnlock,
     /// The workspace with the browser open beside the panel of the steps an agent's browser recording kept, an earlier step chosen to replay.
     BrowserSteps,
+    /// The workspace with the browser open beside the panel of recipes, after a run whose checks passed and failed.
+    BrowserRecipes,
     /// The workspace with the browser open and the menu of a right click on a link in a page open.
     BrowserPageMenu,
     /// The workspace with the browser open on an article shown in reader view, its button pressed in the bar.
@@ -1995,6 +1997,47 @@ fn step_picture(width: u32, height: u32, tint: [u8; 3]) -> rustle::ImageData {
     }
     rustle::ImageData::from_rgba(width, height, pixels)
         .expect("as many pixels as the picture is large")
+}
+
+/// The workspace with the browser open beside the panel of recipes: two saved recipes, and the table of a run of the first in which one check failed.
+fn browser_recipes() -> WorkspaceState {
+    use pm_components::browser_recipes::{Recipe, RecipeCheck, RecipeRun};
+    let mut state = browser_finding(false);
+    if let Some(browser) = state.browser.as_mut() {
+        let recipes = &mut browser.recipes;
+        recipes.open = true;
+        recipes.list = vec![
+            Recipe {
+                name: "checkout-smoke".to_owned(),
+                first: "await page.goto('/shop');".to_owned(),
+            },
+            Recipe {
+                name: "consent-banner".to_owned(),
+                first: "const context = await browser.newContext({ locale: 'de-DE' });".to_owned(),
+            },
+        ];
+        recipes.last = Some(RecipeRun {
+            name: "checkout-smoke".to_owned(),
+            ok: false,
+            error: None,
+            checks: vec![
+                RecipeCheck {
+                    name: "ingest returned 202".to_owned(),
+                    ok: true,
+                    detail: String::new(),
+                },
+                RecipeCheck {
+                    name: "receipt shows the total".to_owned(),
+                    ok: false,
+                    detail: "\"Total: —\"".to_owned(),
+                },
+            ],
+            steps: 7,
+            ms: 4210,
+            recording: Some("/home/ada/recordings/2026-11-26T09-12-00-recipes".to_owned()),
+        });
+    }
+    state
 }
 
 /// The workspace with the browser on a page and the panel of the steps two agent sessions' recordings kept beside it, the second of five steps chosen; the second step typed a password, which the recording redacted.
@@ -3823,6 +3866,7 @@ impl Shot {
                 Screen::Workspace(state)
             }
             Self::BrowserSteps => Screen::Workspace(browser_steps()),
+            Self::BrowserRecipes => Screen::Workspace(browser_recipes()),
             Self::BrowserReader => {
                 let mut state = workspace_sample();
                 state.open_browser("https://example.com/blog/the-long-walk");

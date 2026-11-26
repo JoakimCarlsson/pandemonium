@@ -118,6 +118,8 @@ pub enum Command {
     AdoptPopup(u64),
     /// Show the article of the page in reader view, or the page again when reader view shows.
     ToggleReader,
+    /// List the recipes agents saved, or run one, through `browser_run` on the tab.
+    Recipe(crate::browser_recipes::RecipeAction),
 }
 
 /// How the pointer looks over the page, as the page asks.
@@ -188,6 +190,8 @@ pub struct Browser {
     pub known_hosts: Vec<String>,
     /// The steps the latest recording of the agents' browser work kept, and the panel showing them.
     pub steps: crate::browser_steps::Steps,
+    /// The recipes agents saved, and the panel that lists and runs them.
+    pub recipes: crate::browser_recipes::Recipes,
 }
 
 impl Deref for Browser {
@@ -230,6 +234,7 @@ impl Browser {
             suggestions: Vec::new(),
             known_hosts: Vec::new(),
             steps: crate::browser_steps::Steps::default(),
+            recipes: crate::browser_recipes::Recipes::default(),
         }
     }
 
@@ -449,6 +454,7 @@ impl WorkspaceState {
             || self.browser_chrome_pressed(id)
             || self.browser_privacy_pressed(id)
             || self.browser_steps_pressed(id)
+            || self.browser_recipes_pressed(id)
         {
             return self;
         }
@@ -778,6 +784,7 @@ fn toolbar(browser: &Browser, capture_menu: Option<crate::Menu>) {
             crate::browser_privacy::shield_button(browser);
             crate::browser_chrome::downloads_button(browser);
             crate::browser_steps::steps_button(browser);
+            crate::browser_recipes::recipes_button(browser);
             let tools = browser.tools;
             Button::icon(
                 phosphor::SIDEBAR_SIMPLE,
@@ -945,6 +952,7 @@ pub fn browser_view(state: &WorkspaceState, width: f32) {
                     page_box(browser, &covered);
                     if !fullscreen {
                         crate::browser_steps::steps_panel(&browser.steps);
+                        crate::browser_recipes::recipes_panel(&browser.recipes);
                     }
                     if browser.tools && !fullscreen {
                         divider();

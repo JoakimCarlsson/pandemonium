@@ -121,6 +121,8 @@ pub struct BrowserTab {
     pub pinned: bool,
     /// Whether the tab is private: its page lives in a profile kept in memory only, which the helper empties when the last private tab closes, nothing it visits or zooms is remembered, and the tab is not kept across a restart.
     pub private: bool,
+    /// The profile of a context a script of an agent opened, when the tab is one of its pages: a fresh profile kept in memory that no other tab shares, emptied when the context closes; the tab is not kept across a restart.
+    pub context: Option<String>,
 }
 
 /// How many closed tabs are kept for opening again.
@@ -150,6 +152,7 @@ impl BrowserTab {
             chrome: crate::browser_chrome::PageChrome::default(),
             pinned: false,
             private: false,
+            context: None,
         }
     }
 

@@ -1615,12 +1615,15 @@ server hosts on its loopback address; the server hands each call to a window.
   `browser_back`, `browser_forward`, `browser_reload`, `browser_evaluate`,
   `browser_console`, `browser_network`, `browser_wait`, `browser_handle_dialog`,
   `browser_hover`, `browser_drag`, `browser_fill_form`, `browser_highlight`,
-  `browser_get_bounding_box`, `browser_resize` and `browser_record`; `arguments` is the JSON the
+  `browser_get_bounding_box`, `browser_resize`, `browser_record` and `browser_run`; `arguments` is the JSON the
   agent gave. `browser_screenshot` also takes `full_page`, or `ref` or
   `selector` for one element. The schema of each tool is in
   `crates/pm-server/src/browser_tools.rs`; how the helper runs them is in
   [browser.md](browser.md#what-agents-can-do-with-a-page). The tools add no
   message: they travel in `browser_call` and `browser_result` as before.
+  `browser_run` runs a whole script in one call and may take up to ten minutes,
+  so the server waits up to 660 seconds for its `browser_result` instead of 90
+  (see [browser.md](browser.md#scripts-contexts-and-recipes)).
 - Tabs add a tool and an argument, not a message. `browser_tabs` (`action` is
   `list`, `open`, `select` or `close`, with `url` and `tab`) and an optional
   integer `tab` on every other tool travel in `arguments` of `browser_call` as

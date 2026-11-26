@@ -218,6 +218,7 @@ fn main() {
             Some("browser-primary-create") => Shot::BrowserPrimaryCreate,
             Some("browser-primary-unlock") => Shot::BrowserPrimaryUnlock,
             Some("browser-steps") => Shot::BrowserSteps,
+            Some("browser-recipes") => Shot::BrowserRecipes,
             Some("browser-page-menu") => Shot::BrowserPageMenu,
             Some("browser-reader") => Shot::BrowserReader,
             Some("elements") => Shot::Elements,

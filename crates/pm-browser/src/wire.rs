@@ -699,6 +699,9 @@ pub enum Event {
         url: String,
         /// Whether a tool of an agent was running on the page when it asked, so the new tab is the agent's.
         agent: bool,
+        /// The profile the new tab must live in, when a script of an agent asked for a tab of a context of its own; the window opens it as an agent's tab in that profile.
+        #[serde(default)]
+        partition: Option<String>,
     },
     /// A render asked for with [`Request::RenderHtml`] ended.
     HtmlRendered {

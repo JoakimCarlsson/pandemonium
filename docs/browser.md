@@ -660,6 +660,68 @@ to replay the work, and below them every step listed with a thumbnail;
 pressing one shows it, and **Latest** goes back to following each new step as
 it arrives. The `browser-steps` snapshot shows the panel.
 
+### Scripts, contexts and recipes
+
+`browser_run` runs a whole flow in one call and answers only with what the
+script returns (`src/runner.js`). `script` is the body of an async function
+run in a Node `vm` context of the helper, which holds nothing but the API: the
+tab of the call as `page`, `browser.newContext`, `check`, `log`, `sleep` and
+`parallel`. Each page method, such as `goto`, `click`, `fill`, `type`,
+`select`, `waitFor` or `screenshot`, runs the browser tool of the same name on
+that page, through the same origin restriction, and throws the tool's text when
+it fails. The answer is JSON: `ok`, `value` (what the script returned),
+`error`, `checks` with `passed` and `failed`, `logs`, `steps`, `ms`, `recipe`
+and `recording`. `ok` is false when the script threw, ran past `timeout_ms`
+(60 seconds by default, at most 600), or a check failed. `base_url` makes
+relative `goto` addresses whole; the window resolves it as it resolves
+`browser_navigate`'s `url`, so it is how a script reaches a remote project's
+server.
+
+Requests are data in scripts: `waitForResponse(pattern)` waits as
+`browser_network`'s `wait_for` does, a request that finished since the step
+before started counting, and gives `{ url, method, type, status, failure,
+finished, body }`; `requests(pattern)` lists what the recorder holds, and
+`count(pattern)` gives `{ total, statuses, failed }`, `statuses` mapping each
+status as text to how many had it.
+
+`browser.newContext({ device, viewport, locale, timezone, userAgent,
+headless })` makes a context: a profile kept in memory named `context-<pid>-<n>`
+that no tab and no other context shares, so its cookies and storage start
+empty, emptied when the context closes or the run ends (`partitions.release`).
+`device` takes the presets of `browser_emulate`; `locale` sets
+`Emulation.setLocaleOverride` and the `Accept-Language` header, `timezone`
+`Emulation.setTimezoneOverride`. A context is headless unless `headless` is
+false: its pages are pages of the helper that no tab shows, numbered below
+zero, which report nothing to the window. A context shown in the pane asks the
+window for each page as a page asks for a new window, `OpenRequested` with the
+context's `partition`; the window opens an agent's tab behind the one shown in
+that profile (`BrowserTab::context`), leaves the tools' tab as it was and never
+saves the tab, and the helper hands the tab's page to the script when its
+`Open` arrives. Closing such a page reports `PageClosed`, which closes the tab.
+At most `limit` pages of contexts are open at once (4 by default, at most 8);
+`newPage` waits for a free one, and `parallel(items, fn, limit)` runs `fn` on
+the items that many at a time, giving each `{ ok, value }` or `{ ok: false,
+error }`.
+
+Clicks and typing can look like a person's: `browser_click` with `human`, and
+`click` in scripts with `{ human: true }` or the run's `human`, scrolls the
+element into view smoothly, waits for the scroll to stop, glides the pointer
+there along an eased path from where it last was, and lingers before pressing
+and letting go. `browser_type` with `delay_ms`, and `type` in scripts (80 ms by
+default), sends a key press and release for each character with about that
+delay between them, varied by a third.
+
+`save` keeps the script, with `base_url`, `human`, `limit` and `timeout_ms`, as
+a recipe in `recipes/<name>.json` of the helper's profile folder; `recipe` runs
+one by name, `list` lists them, and `record` records each step of the run as
+`browser_record` does, named in `recording`. The list button in the toolbar
+opens the panel of recipes (`pm-components/src/browser_recipes.rs`): it lists
+them through `browser_run` with `list` on the tab shown, and **Run** runs one
+recorded on that tab as the session `recipes`, with no agent; the answer goes to
+the panel, not to a server, and the panel shows whether it passed, a row for
+each check with its mark and detail, and the folder of its recording. The
+`browser-recipes` snapshot shows the panel.
+
 ## File pickers
 
 A click on `<input type=file>` makes Electron open a native dialog parented to

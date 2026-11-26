@@ -13,6 +13,7 @@ use pm_components::browser_keys::{Shortcut, shortcut_of};
 use pm_components::browser_life::{PageFailure, PageLife};
 use pm_components::browser_links::{Route, route};
 use pm_components::browser_menu::BrowserCommand;
+use pm_components::browser_recipes::RecipeAction;
 use pm_components::browser_safety::{Answer, Certificate, Download, Question, Safety, Saving};
 use pm_components::browser_tabs::{TabInfo, changes_page, locked_message};
 use pm_components::elements::Element;
@@ -81,6 +82,8 @@ pub(super) struct Web {
     next_call: u64,
     /// The tool calls running, by this window's number, with the machine and the server's number.
     calls: std::collections::HashMap<u64, (Option<String>, u64)>,
+    /// The recipe runs and listings the pane asked for, by this window's number for the call, with the tab they run on.
+    recipe_calls: std::collections::HashMap<u64, (u32, RecipeAction)>,
     /// Whether the setting was on when last looked at.
     was_enabled: bool,
     /// What the download says it is doing, written by its thread.
@@ -1048,6 +1051,7 @@ impl App {
                 }
                 Command::CopyText(text) => self.browser_copy_text(&text),
                 Command::ToggleReader => self.browser_toggle_reader(tab),
+                Command::Recipe(action) => self.browser_recipe(tab, action),
                 Command::Reload | Command::HardReload if self.browser_sealed_without_page(tab) => {
                     self.browser_load_sealed(tab, scale);
                 }
@@ -1366,7 +1370,8 @@ impl App {
             | Command::OpenTools
             | Command::CloseTools
             | Command::AdoptPopup(_)
-            | Command::ToggleReader => {}
+            | Command::ToggleReader
+            | Command::Recipe(_) => {}
         }
     }
 
@@ -1462,14 +1467,24 @@ impl App {
                     });
                 });
             }
-            for (url, agent) in opened {
+            for (url, agent, partition) in opened {
                 let host = self.browser_tab_host(*id);
                 let address = self.browser_unresolve(&url, host.as_deref());
                 self.model.update(|state| {
                     state.browser_scoped_to_tab(*id, |state| {
+                        let target = state.browser.as_ref().and_then(|b| b.agent_tab);
                         let opened = state.browser_tab_opened(&address, host, agent, !agent);
-                        if let Some(opened) = opened {
-                            state.browser_tab_inherit(*id, opened);
+                        let Some(opened) = opened else {
+                            return;
+                        };
+                        match partition {
+                            Some(partition) => {
+                                state.browser_tab_in_context(opened, partition);
+                                if let Some(browser) = state.browser.as_mut() {
+                                    browser.agent_tab = target;
+                                }
+                            }
+                            None => state.browser_tab_inherit(*id, opened),
                         }
                     });
                 });
@@ -1823,9 +1838,42 @@ impl App {
                     });
                 });
             }
+            if let Some((ran, action)) = self.web.recipe_calls.remove(&result.call) {
+                self.model.update(|state| {
+                    state.browser_scoped_to_tab(ran, |state| {
+                        state.browser_recipe_answered(&action, &result.text);
+                    });
+                });
+                continue;
+            }
             self.browser_answer(result.call, result.ok, result.text, image);
         }
         !self.web.calls.is_empty()
+    }
+
+    /// Lists the recipes, or runs one recorded, through `browser_run` on the page of the tab `tab`, as the reader asked from the pane; the answer goes to the panel of recipes, not to an agent.
+    fn browser_recipe(&mut self, tab: u32, action: RecipeAction) {
+        let arguments = match &action {
+            RecipeAction::List => serde_json::json!({ "list": true }),
+            RecipeAction::Run(name) => serde_json::json!({ "recipe": name, "record": true }),
+        };
+        let Some(page) = self.web.pages.get(&tab).map(|shown| &shown.view) else {
+            self.model.update(|state| {
+                state.browser_scoped_to_tab(tab, |state| {
+                    state
+                        .browser_recipe_answered(&action, "The tab has no page to run recipes in.");
+                });
+            });
+            return;
+        };
+        self.web.next_call += 1;
+        let local = self.web.next_call;
+        let caller = Caller {
+            session: "recipes".to_owned(),
+            name: "Recipes".to_owned(),
+        };
+        page.tool(local, "browser_run", &arguments.to_string(), &caller);
+        self.web.recipe_calls.insert(local, (tab, action));
     }
 
     /// Gives the server the answer of the tool call `local`.
@@ -1873,9 +1921,14 @@ impl App {
         if let Some(object) = arguments_json.as_object_mut() {
             object.remove("tab");
         }
-        if tool == "browser_navigate" {
-            let Some(url) = arguments_json["url"].as_str().map(str::to_owned) else {
-                self.browser_answer(local, false, "no url was given".to_owned(), Vec::new());
+        let address_key = match tool {
+            "browser_navigate" => Some("url"),
+            "browser_run" if arguments_json.get("base_url").is_some() => Some("base_url"),
+            _ => None,
+        };
+        if let Some(key) = address_key {
+            let Some(url) = arguments_json[key].as_str().map(str::to_owned) else {
+                self.browser_answer(local, false, format!("no {key} was given"), Vec::new());
                 return true;
             };
             if !agent_may_open(&url) {
@@ -1894,7 +1947,7 @@ impl App {
                     return true;
                 }
             };
-            arguments_json["url"] = serde_json::Value::String(resolved);
+            arguments_json[key] = serde_json::Value::String(resolved);
         }
         let tabs = self
             .model
@@ -1915,7 +1968,7 @@ impl App {
         };
         let target = match target {
             Some(id) => id,
-            None if tool == "browser_navigate" => {
+            None if tool == "browser_navigate" || tool == "browser_run" => {
                 let mut opened = None;
                 self.model.update(|state| {
                     opened = state.browser_tab_opened("about:blank", host.clone(), true, true);
@@ -2179,6 +2232,16 @@ impl App {
                 "The embedded browser stopped while the tool ran. It was started again and its tabs were opened again at their last addresses; call the tool again.".to_owned(),
                 Vec::new(),
             );
+        }
+        for (_, (tab, action)) in std::mem::take(&mut self.web.recipe_calls) {
+            self.model.update(|state| {
+                state.browser_scoped_to_tab(tab, |state| {
+                    state.browser_recipe_answered(
+                        &action,
+                        "The embedded browser stopped while the recipe ran.",
+                    );
+                });
+            });
         }
         let now = Instant::now();
         self.web

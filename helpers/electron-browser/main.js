@@ -22,6 +22,7 @@ const features = require('./src/features');
 const lifecycle = require('./src/lifecycle');
 const partitions = require('./src/partitions');
 const recording = require('./src/recording');
+const runner = require('./src/runner');
 const { LineReader } = require('./src/lines');
 
 /** @typedef {import('./src/types').Event} Event */
@@ -78,6 +79,19 @@ function send(event) {
  * @type {Map<number, Page>}
  */
 const pages = new Map();
+
+/** The number the next page no tab shows gets: below zero, so it never meets a number the window chose. */
+let nextHeadless = -1;
+
+runner.configure({
+  makePage(partition, width, height) {
+    const page = new Page({ id: nextHeadless, width, height, scale: 1, folder: surfacesFolder, send: () => {}, inspectable: true, partition });
+    nextHeadless -= 1;
+    watchWeb(page);
+    return page;
+  },
+  recipes: () => path.join(profileFolder || app.getPath('userData'), 'recipes'),
+});
 
 /**
  * The fields every request about a page has.
@@ -183,6 +197,7 @@ function handle(request) {
     pages.set(body.page, page);
     watchWeb(page);
     page.load(body.url);
+    runner.opened(page);
   } else if ('OpenHtml' in request) {
     const body = request.OpenHtml;
     const page = new Page({

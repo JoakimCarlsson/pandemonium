@@ -20,6 +20,9 @@ use crate::mcp_endpoint::{Endpoint, failure, tool};
 /// How long a call waits for a window to answer.
 const PATIENCE: Duration = Duration::from_secs(90);
 
+/// How long a `browser_run` call waits for a window to answer: the longest a script may run, and a minute more for its pages to close.
+const SCRIPT_PATIENCE: Duration = Duration::from_secs(660);
+
 /// What a window answered a call with.
 pub(crate) struct Reply {
     /// Whether the tool worked.
@@ -126,7 +129,12 @@ fn run(tool: &str, arguments: &str, session: u64) -> Result<Reply, String> {
         }
         return Err("the window with the browser went away".to_owned());
     }
-    receiver.recv_timeout(PATIENCE).map_err(|_| {
+    let patience = if tool == "browser_run" {
+        SCRIPT_PATIENCE
+    } else {
+        PATIENCE
+    };
+    receiver.recv_timeout(patience).map_err(|_| {
         if let Ok(mut pending) = TOOLS.pending.lock() {
             pending.remove(&call);
         }
@@ -186,23 +194,25 @@ fn definitions() -> Vec<Value> {
         ),
         tool(
             "browser_click",
-            "Click an element, given by `ref` or `selector`, or a point given by `x` and `y` in the page.",
+            "Click an element, given by `ref` or `selector`, or a point given by `x` and `y` in the page. `human` glides the pointer there, scrolls the element into view smoothly and lingers before pressing, as a person does.",
             &json!({
                 "ref": target["ref"],
                 "selector": target["selector"],
                 "x": { "type": "number" },
                 "y": { "type": "number" },
+                "human": { "type": "boolean", "description": "Move the pointer and scroll like a person, so a recording looks like real use." },
             }),
             &[],
         ),
         tool(
             "browser_type",
-            "Type text into a text field, given by `ref` or `selector`; `submit` presses Enter afterwards. Lists and boxes cannot be typed in.",
+            "Type text into a text field, given by `ref` or `selector`; `submit` presses Enter afterwards. Lists and boxes cannot be typed in. `delay_ms` types key by key, with a key press and release for each and about that many milliseconds between keys, as a person types.",
             &json!({
                 "ref": target["ref"],
                 "selector": target["selector"],
                 "text": { "type": "string" },
                 "submit": { "type": "boolean" },
+                "delay_ms": { "type": "integer", "minimum": 0, "maximum": 1000, "description": "Type one key at a time with about this delay between keys; at once when 0 or omitted." },
             }),
             &["text"],
         ),
@@ -407,6 +417,22 @@ fn definitions() -> Vec<Value> {
             }),
             &[],
         ),
+        tool(
+            "browser_run",
+            "Run a whole browser script in one call and get back only what it returns, as JSON: `{ ok, value, error, checks, passed, failed, logs, steps, ms, recipe, recording }`. `script` is the body of an async function. In scope: `page` (the tab), `browser.newContext({ device, viewport: { width, height }, locale, timezone, userAgent, headless })` for a fresh, disposable profile with its own cookies and storage (headless unless `headless: false`, which opens it as an agent tab; `context.newPage()`, `context.close()`), `check(name, condition, detail)` for the pass/fail table, `log(...)`, `sleep(ms)` and `parallel(items, async (item, index) => ..., limit)`. Pages have `goto(url)` (relative to `base_url`), `click(selector | { ref } | { x, y }, { human })`, `fill(selector, text)`, `type(selector, text, { delay, submit })` key by key, `press(key, { modifiers })`, `select(selector, value)`, `check(selector, on)`, `hover(selector)`, `waitFor(selector | { text }, { timeout })`, `waitForResponse(pattern, { timeout, type })` giving `{ url, method, type, status, failure, finished, body }`, `requests(pattern)`, `count(pattern)` giving `{ total, statuses: { \"202\": 1 }, failed }`, `evaluate(fn | expression, arg)`, `text(selector)`, `url()`, `title()`, `screenshot({ fullPage, selector })` and `snapshot()`. Each step is the browser tool of the same name and throws its message when it fails; a thrown error or a failed check makes `ok` false. At most `limit` pages of contexts are open at once (4 by default, at most 8). `save` keeps the script as a named recipe the reader can run again from the pane; `recipe` runs a saved one; `list` lists them. `record` records every step with a screenshot, as browser_record does.",
+            &json!({
+                "script": { "type": "string", "description": "The body of an async function using page, browser, check, log, sleep and parallel; what it returns comes back as value." },
+                "recipe": { "type": "string", "description": "Run the saved recipe of this name instead of script." },
+                "save": { "type": "string", "description": "Save script, with base_url, human, limit and timeout_ms, as a recipe of this name, then run it." },
+                "list": { "type": "boolean", "description": "List the saved recipes and run nothing." },
+                "base_url": { "type": "string", "description": "The address relative goto addresses are taken from." },
+                "human": { "type": "boolean", "description": "Make every click move the pointer and scroll like a person unless a step says otherwise." },
+                "limit": { "type": "integer", "minimum": 1, "maximum": 8, "description": "The most pages of contexts open at once, and the default of parallel; 4 when omitted." },
+                "timeout_ms": { "type": "integer", "minimum": 1000, "maximum": 600000, "description": "How long the script may run; 60000 when omitted." },
+                "record": { "type": "boolean", "description": "Record each step with a screenshot into a new recording, named in the answer." },
+            }),
+            &[],
+        ),
     ];
     for definition in &mut tools {
         definition["inputSchema"]["properties"]["tab"] = json!({
@@ -462,7 +488,7 @@ mod tests {
         unique.dedup();
         assert_eq!(unique.len(), names.len());
         let tail = &names[names.len() - 3..];
-        assert_eq!(tail, ["browser_cdp", "browser_emulate", "browser_tabs"]);
+        assert_eq!(tail, ["browser_emulate", "browser_run", "browser_tabs"]);
     }
 
     /// The network, console and recording tools take their options.

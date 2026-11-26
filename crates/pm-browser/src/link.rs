@@ -74,8 +74,8 @@ pub(crate) struct PageState {
     captured: Mutex<Vec<Capture>>,
     /// The text the reader copied or cut in the page that the window has not put on its clipboard yet, oldest first.
     copied: Mutex<Vec<Copied>>,
-    /// The new windows the page asked for that the window has not opened yet: the address, and whether an agent's tool was running.
-    opened: Mutex<Vec<(String, bool)>>,
+    /// The new windows the page asked for that the window has not opened yet: the address, whether an agent's tool was running, and the profile a script's context asked for.
+    opened: Mutex<Vec<(String, bool, Option<String>)>>,
     /// Which file the newest paint is in, and how many paints there have been.
     latest: Mutex<Option<(u8, u64)>>,
     /// The title, the address and how the pointer should look.
@@ -170,7 +170,7 @@ impl PageState {
     }
 
     /// The new windows the page asked for since the last call.
-    pub(crate) fn take_opened(&self) -> Vec<(String, bool)> {
+    pub(crate) fn take_opened(&self) -> Vec<(String, bool, Option<String>)> {
         self.opened
             .lock()
             .map(|mut held| std::mem::take(&mut *held))
@@ -553,11 +553,16 @@ impl Link {
                     held.notify(Notice::Download { name, state });
                 }
             }
-            Event::OpenRequested { page, url, agent } => {
+            Event::OpenRequested {
+                page,
+                url,
+                agent,
+                partition,
+            } => {
                 if let Some(state) = self.page(page)
                     && let Ok(mut opened) = state.opened.lock()
                 {
-                    opened.push((url, agent));
+                    opened.push((url, agent, partition));
                 }
             }
             Event::Chrome { page, report } => {
