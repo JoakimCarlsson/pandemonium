@@ -649,6 +649,11 @@ pub enum Response {
         /// The zoom of each origin and the addresses visited.
         sites: crate::BrowserSites,
     },
+    /// The files the server keeps about its own health, after a `diagnostics`.
+    Diagnostics {
+        /// The files, in the order they go into the report.
+        files: Vec<crate::DiagnosticFile>,
+    },
 }
 
 #[cfg(test)]

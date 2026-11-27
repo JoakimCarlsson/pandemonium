@@ -23,6 +23,8 @@ use snapshot::{Shot, Trigger};
 /// on this machine with the options that follow, or, given
 /// `--snapshot <path> [elapsed_ms [x y [focus [light [screen [scale]]]]]]`, writes one frame to a PNG,
 /// at `scale` physical pixels a logical one, and leaves.
+///
+/// Every panic of the window, and of a server it runs, is recorded in the app's crash log, which the next window tells the reader about.
 fn main() {
     startup::begin();
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -149,6 +151,8 @@ fn main() {
             Some("signed-out") => Shot::SignedOut,
             Some("tool-sign-in") => Shot::ToolSignIn,
             Some("sign-in-code") => Shot::SignInCode,
+            Some("crash-notice") => Shot::CrashNotice,
+            Some("bug-report-saved") => Shot::BugReportSaved,
             Some("out-of-reach") => Shot::OutOfReach,
             Some("title-lines") => Shot::TitleLines,
             Some("pull-request") => Shot::PullRequest,
@@ -351,6 +355,7 @@ fn main() {
     }
 
     startup::mark("arguments-read");
+    pm_server::diagnostics::record_crashes(pm_server::diagnostics::WINDOW);
     let app = App::new(rustle::external_waker());
     app::run(app);
 }

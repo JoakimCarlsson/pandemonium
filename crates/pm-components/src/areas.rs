@@ -974,6 +974,16 @@ pub enum DialogEvent {
     AdderSubmit,
     /// Highlights the row above.
     AdderUp,
+    /// Hides the bug report dialog.
+    BugReportHide,
+    /// The panel of the bug report dialog.
+    BugReportInside,
+    /// Gathers and saves a bug report.
+    BugReportMake,
+    /// The dimmed window behind the bug report dialog.
+    BugReportOutside,
+    /// Shows the saved bug report in the file manager.
+    BugReportShow,
     /// Goes back to the folder looked inside before this one.
     PickerBack,
     /// Closes the picker without choosing.

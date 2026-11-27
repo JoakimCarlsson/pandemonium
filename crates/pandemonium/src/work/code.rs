@@ -1451,7 +1451,7 @@ impl Work {
 }
 
 /// Shows `file` in the file manager of this machine, picked out among the files beside it where the file manager can do that, and its folder opened otherwise.
-fn reveal(file: &std::path::Path) {
+pub(super) fn reveal(file: &std::path::Path) {
     let quiet = |command: &mut std::process::Command| {
         command
             .stdout(std::process::Stdio::null())

@@ -15,6 +15,7 @@ mod core;
 mod credential;
 mod debugs;
 mod dependencies;
+pub mod diagnostics;
 mod documents;
 mod entries;
 mod extensions;

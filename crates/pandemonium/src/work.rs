@@ -19,6 +19,7 @@ use rustle::ImageData;
 
 use crate::view::View;
 
+mod bug_report;
 pub(crate) mod code;
 mod debug;
 mod import;
@@ -121,6 +122,8 @@ enum Pending {
     McpServers,
     /// What the sessions of the server on this machine used over this many days.
     Usage(Host, u32),
+    /// The files the server of this machine keeps about its own health, for the bug report being gathered.
+    Diagnostics(Host),
     /// The model servers declared on this machine's server, as they stand after a change or as they were asked for.
     ModelServers,
     /// What the browser remembers of sites, kept by the server on this machine, from the fetch with this number.
@@ -880,6 +883,8 @@ pub struct Work {
     wake: pm_client::Wake,
     /// What would have been sent to the servers, while the work reaches none.
     offline: Option<Vec<(Host, Request)>>,
+    /// The bug report being gathered, while the servers have not all answered.
+    gathering: Option<bug_report::Gathering>,
 }
 
 impl Work {
@@ -896,6 +901,7 @@ impl Work {
             watched: HashMap::new(),
             read_again: HashSet::new(),
             importing: HashMap::new(),
+            gathering: None,
             numbers: HashMap::new(),
             positions: HashMap::new(),
             forgotten: HashSet::new(),
@@ -2175,6 +2181,8 @@ impl Work {
                     self.download_update(channel, version)
                 }
                 Outgoing::CancelUpdate => self.ask(&None, Request::CancelUpdate, Pending::Nothing),
+                Outgoing::ReportBug => self.report_bug(model),
+                Outgoing::RevealReport { path } => code::reveal(std::path::Path::new(&path)),
                 Outgoing::Notify { title, body, how } => crate::notify::tell(how, &title, &body),
                 debugging @ (Outgoing::DebugScenarios { .. }
                 | Outgoing::DebugProcesses { .. }
@@ -2243,6 +2251,7 @@ impl Work {
                         model.update(|screen| {
                             *screen = std::mem::take(screen).with_git_working(false);
                         });
+                        self.diagnosed(model, &host, Err(format!("out of reach: {reason}")));
                         model.change(|state| state.host_lost(&host));
                     }
                     Incoming::Response { id, response } => {
@@ -2536,9 +2545,16 @@ impl Work {
                     return;
                 };
                 for (_, pending) in link.backlog {
-                    if let Pending::Start(session) = pending {
-                        let reason = reason.clone();
-                        model.change(|state| state.heard(session, HarnessEvent::Failed(reason)));
+                    match pending {
+                        Pending::Start(session) => {
+                            let reason = reason.clone();
+                            model
+                                .change(|state| state.heard(session, HarnessEvent::Failed(reason)));
+                        }
+                        Pending::Diagnostics(asked) => {
+                            self.diagnosed(model, &asked, Err(reason.clone()));
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -2731,6 +2747,13 @@ impl Work {
                     other => Err(Self::trouble_of(other)),
                 };
                 model.change(|state| state.with_usage_report(host, days, answer));
+            }
+            Pending::Diagnostics(host) => {
+                let answer = match response {
+                    Response::Diagnostics { files } => Ok(files),
+                    other => Err(Self::trouble_of(other)),
+                };
+                self.diagnosed(model, &host, answer);
             }
             Pending::McpServers => {
                 if let Response::McpServers { servers } = response {

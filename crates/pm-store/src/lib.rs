@@ -21,6 +21,23 @@ fn directory() -> Option<PathBuf> {
     data_root().map(|data| data.join(app_name()))
 }
 
+/// The file the app's crash log is kept in, in its data folder.
+pub fn crash_file() -> Option<PathBuf> {
+    directory().map(|directory| directory.join("crashes.json"))
+}
+
+/// The folder files the reader asked for are saved in, such as a bug report: the desktop's downloads folder, else the home folder.
+#[cfg(not(any(test, feature = "scratch-folders")))]
+pub fn downloads_folder() -> Option<PathBuf> {
+    dirs::download_dir().or_else(dirs::home_dir)
+}
+
+/// The stand-in for the downloads folder in tests, so that they never write into the reader's own.
+#[cfg(any(test, feature = "scratch-folders"))]
+pub fn downloads_folder() -> Option<PathBuf> {
+    Some(scratch_root().join("downloads"))
+}
+
 /// The desktop's data directory, which the app's data folder is made in.
 #[cfg(not(any(test, feature = "scratch-folders")))]
 fn data_root() -> Option<PathBuf> {

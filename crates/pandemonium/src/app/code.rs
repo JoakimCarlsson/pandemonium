@@ -756,6 +756,13 @@ impl App {
                 self.model.change(|state| state.commands_requested(at));
             }
             Action::OpenSettings => self.open_settings(),
+            Action::ReportBug => {
+                self.model.change(|mut state| {
+                    state.bug_report_asked();
+                    state
+                });
+                self.deliver();
+            }
             Action::GoToSession => {
                 let at = self.across_top();
                 self.model.change(|state| state.sessions_requested(at));

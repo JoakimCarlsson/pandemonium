@@ -17,6 +17,8 @@ pub enum Action {
     CommandPalette,
     /// Opens the settings.
     OpenSettings,
+    /// Saves a bug report: this build's version, the operating system and the crash log of every machine the window reaches, as a zip.
+    ReportBug,
     /// Lists the sessions, to go to one by typing part of its name.
     GoToSession,
     /// Starts a new session in the project shown.
@@ -425,9 +427,10 @@ pub enum Action {
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 204] = [
+    pub const ALL: [Self; 205] = [
         Self::CommandPalette,
         Self::OpenSettings,
+        Self::ReportBug,
         Self::GoToSession,
         Self::NewSession,
         Self::NewChat,
@@ -637,6 +640,7 @@ impl Action {
         match self {
             Self::CommandPalette => "command_palette",
             Self::OpenSettings => "open_settings",
+            Self::ReportBug => "report_bug",
             Self::GoToSession => "go_to_session",
             Self::NewSession => "new_session",
             Self::NewChat => "new_chat",
@@ -847,6 +851,7 @@ impl Action {
         match self {
             Self::CommandPalette => "Show All Commands",
             Self::OpenSettings => "Open Settings",
+            Self::ReportBug => "Report a Bug",
             Self::GoToSession => "Go to Session",
             Self::NewSession => "New Session",
             Self::NewChat => "New Chat",
@@ -1069,6 +1074,7 @@ impl Action {
             Self::GoToSession => "switch project workspace",
             Self::CloneRepository => "new workspace project",
             Self::OpenSettings => "preferences configure",
+            Self::ReportBug => "bug report crash issue diagnostics feedback",
             Self::CommandPalette => "command palette",
             Self::RetryReply => "retry regenerate answer again",
             Self::StartFresh => "fresh clear new context reset",
@@ -1144,7 +1150,7 @@ impl Action {
             | Self::Redo
             | Self::CursorUndo
             | Self::CursorRedo => "Editing",
-            Self::CommandPalette | Self::OpenSettings => "Window",
+            Self::CommandPalette | Self::OpenSettings | Self::ReportBug => "Window",
             Self::GoToSession
             | Self::NewSession
             | Self::NewChat
@@ -1251,6 +1257,7 @@ impl Action {
             self,
             Self::CommandPalette
                 | Self::OpenSettings
+                | Self::ReportBug
                 | Self::GoToSession
                 | Self::NewSession
                 | Self::NewChat
@@ -1509,6 +1516,7 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
     &[
         (CommandPalette, &["ctrl+shift+p", "f1"]),
         (OpenSettings, &["ctrl+,"]),
+        (ReportBug, &[]),
         (GoToSession, &["ctrl+r"]),
         (NewSession, &["ctrl+n"]),
         (NewChat, &[]),

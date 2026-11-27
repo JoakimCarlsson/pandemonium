@@ -960,6 +960,9 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             core.folders.watch(connection, directories);
             Response::Done
         }
+        Request::Diagnostics => Response::Diagnostics {
+            files: crate::diagnostics::files(crate::diagnostics::SERVER),
+        },
         Request::MachineSettings => Response::MachineSettings {
             settings: crate::machine::settings(),
         },

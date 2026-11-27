@@ -1457,6 +1457,8 @@ pub enum Request {
         /// The zoom, in percent.
         percent: u32,
     },
+    /// The files the server keeps about its own health, for a bug report: the facts about its build and machine, and its crash log when it has one; answered with `diagnostics`.
+    Diagnostics,
 }
 
 #[cfg(test)]

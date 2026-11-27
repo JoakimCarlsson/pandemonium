@@ -50,6 +50,7 @@ pub mod browser_scope;
 pub mod browser_steps;
 pub mod browser_tab_menu;
 pub mod browser_tabs;
+pub mod bug_report;
 pub mod button;
 pub mod captures;
 pub mod change_list;

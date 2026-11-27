@@ -291,11 +291,20 @@ impl App {
             &window_settings.appearance.interface_font,
             &window_settings.appearance.code_font,
         );
+        let crash = pm_server::diagnostics::take_crash();
         let screen = screen.in_workspace(|state| {
-            state
+            let state = state
                 .with_editor_settings(editor.clone())
                 .with_window_settings(window_settings.clone())
-                .with_fonts(all_fonts, mono_fonts)
+                .with_fonts(all_fonts, mono_fonts);
+            match crash {
+                Some(crash) => {
+                    let minutes =
+                        pm_server::diagnostics::now_ms().saturating_sub(crash.at_ms) / 60_000;
+                    state.with_crash_notice(crash.message, minutes)
+                }
+                None => state,
+            }
         });
         let mut app = Self::assemble(screen, work, window_settings, editor, wake);
         app.window = Some(Rc::new(port::NativePort::new(rustle::WindowHandle::MAIN)));

@@ -231,6 +231,7 @@ fn over(state: &WorkspaceState, height: f32, reviewing: bool) {
     }
     pm_components::browser_clear::clear_question(state);
     pm_components::sign_in_code::code_dialog(state);
+    pm_components::bug_report::report_dialog(state);
     pm_components::assist::assist(state, height);
 }
 

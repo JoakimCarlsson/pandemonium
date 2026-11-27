@@ -6,7 +6,10 @@ use crate::{Settings, run};
 const USAGE: &str = "[--listen ADDRESS] [--token TOKEN] | --version | --index-languages FOLDER";
 
 /// Runs the server as the program `program` was asked to, from its command-line `arguments` without the program name, and returns the process exit code.
+///
+/// Every panic of the process is recorded in the app's crash log, and while the server runs its traces and metrics are sent when the `OTEL_*` variables ask for it and the build can.
 pub fn run_with_arguments(program: &str, mut arguments: impl Iterator<Item = String>) -> i32 {
+    crate::diagnostics::record_crashes(crate::diagnostics::SERVER);
     let mut settings = Settings {
         listen: format!("127.0.0.1:{}", pm_protocol::DEFAULT_PORT),
         token: std::env::var("PANDEMONIUM_TOKEN").ok(),
@@ -43,13 +46,18 @@ pub fn run_with_arguments(program: &str, mut arguments: impl Iterator<Item = Str
             _ => return misuse(program),
         }
     }
-    match run(settings) {
+    let telemetry = crate::diagnostics::start_telemetry(crate::diagnostics::SERVER);
+    let code = match run(settings) {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("{program}: {error}");
             1
         }
+    };
+    if let Some(telemetry) = telemetry {
+        telemetry.shutdown();
     }
+    code
 }
 
 /// Says how `program` is used and returns the exit code for a misuse.

@@ -249,6 +249,19 @@ Screen names are selected in `crates/pandemonium/src/main.rs`; their states are
 built in `crates/pandemonium/src/snapshot.rs`. Settings sections have
 `settings-<section>` shots and `settings-<section>-narrow` shots at 640 by 420.
 
+## Crashes, bug reports and telemetry
+
+Every panic of the window or of a server is recorded in `crashes.json` in the
+app's data folder, which keeps the last five. The next window says so once, for
+a crash of the last seven days, and offers a bug report. **Report a Bug** in the
+command palette saves one too: a zip in the Downloads folder holding the
+window's version and operating system, and the facts and crash log of every
+server the window reaches, local and remote. Nothing is sent anywhere.
+
+A build with `--features otlp` (`cargo build -p pandemonium --features otlp`)
+has each server send the traces and metrics of its agents over OTLP, HTTP with
+protobuf, when `OTEL_EXPORTER_OTLP_ENDPOINT` is set where the server runs.
+
 ## Architecture
 
 See [docs/architecture.md](docs/architecture.md) for the client/server model,

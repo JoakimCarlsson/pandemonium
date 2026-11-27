@@ -665,6 +665,13 @@ pub enum Outgoing {
     },
     /// Has every server the window reaches keep these as what the reader set up for the work it does on its machine.
     SaveMachineSettings(Box<pm_protocol::MachineSettings>),
+    /// Gathers a bug report from this window and every server it reaches, and saves it as a zip on this machine.
+    ReportBug,
+    /// Shows the bug report saved at `path` on this machine in the file manager.
+    RevealReport {
+        /// The zip's path.
+        path: String,
+    },
     /// Tells the reader something happened while they may be looking elsewhere, in the way they chose.
     Notify {
         /// What happened, in a few words.
@@ -1802,6 +1809,8 @@ pub struct WorkspaceState {
     pub update_run: crate::update_dialog::UpdateRun,
     /// The code a sign-in waits for the reader to enter, while one does and the reader has not hidden it.
     pub sign_in_code: Option<crate::sign_in_code::SignInCode>,
+    /// What the bug report dialog shows: that the app crashed, the report being gathered or where it was saved; nothing while it is closed.
+    pub bug_report: Option<crate::bug_report::BugReport>,
     /// The breakpoints and the program being debugged.
     pub debug: crate::debug::DebugState,
     /// What the project can be built, tested and run with.
@@ -2050,6 +2059,9 @@ impl WorkspaceState {
         }
         if crate::browser::is_browser_part(action) {
             return self.browser_pressed(action);
+        }
+        if self.press_bug_report(action) {
+            return self;
         }
         if self.press_sign_in_code(action) {
             return self;

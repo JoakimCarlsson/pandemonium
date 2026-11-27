@@ -313,4 +313,41 @@ mod tests {
         );
         assert!(times[20] < 5.0, "the median was {:.2} ms", times[20]);
     }
+
+    /// A server asked for its diagnostics over a real connection answers with the facts about its build, under its own name.
+    #[test]
+    fn answers_with_its_diagnostics() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let core = Core::new();
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            serve(&core, stream, "token");
+        });
+        let client = pm_client::Client::connect(
+            pm_protocol::Target {
+                address,
+                token: "token".to_owned(),
+            },
+            Arc::new(|| {}),
+        );
+        let id = client.request(pm_protocol::Request::Diagnostics);
+        let started = Instant::now();
+        let files = 'waiting: loop {
+            for item in client.incoming() {
+                if let pm_client::Incoming::Response {
+                    id: held,
+                    response: pm_protocol::Response::Diagnostics { files },
+                } = item
+                    && held == id
+                {
+                    break 'waiting files;
+                }
+            }
+            assert!(started.elapsed() < Duration::from_secs(10));
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(files[0].name, "facts.json");
+        assert!(files[0].text.contains("\"pandemonium-server\""));
+    }
 }

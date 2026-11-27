@@ -164,6 +164,7 @@ request with exactly one `response` carrying the same `id`.
 | `watch_folders`| `directories`: `[string]`                                                                       | `done`          |
 | `machine_settings`| none                                                                                          | `machine_settings` |
 | `save_machine_settings`| `settings`: `{git, history, agents, shell, languages, workspace, extensions, servers}`              | `done`          |
+| `diagnostics`| none                                                                                          | `diagnostics`   |
 | `latest_release`| `channel`: `stable` or `preview`                                                                 | `latest_release` |
 | `download_update`| `channel`, `version`                                                                            | `update_staged` |
 | `cancel_update`| none                                                                                              | `done`          |
@@ -687,6 +688,13 @@ otherwise).
   `.pandemonium`, `node_modules`, `target`, `.git/objects` and `.git/logs` are
   left out, and changes coming close together are told once, at most every
   1.5 seconds while the folder keeps changing.
+- **`diagnostics`:** the files the server keeps about its own health, for a
+  bug report the window saves on its own machine: `facts.json`, with the
+  server's name (`pandemonium-server`), version, operating system and
+  architecture, then `crashes.json`, the last five panics the window and the
+  server of that machine recorded, when there are any. The window asks every
+  server it reaches and puts each one's files in a folder of its own in the
+  zip.
 - **`machine_settings`, `save_machine_settings`:** what the reader set up for
   the work the server does on its machine, kept by the server, replaced whole by
   the save and put to work at once. `git` is `{auto_fetch, fetch_minutes,
@@ -1179,6 +1187,7 @@ embedded context, and anything else as a link to the stored file.
 | `library`    | `product`, `items`, `withheld`, as described under `library` above |
 | `tool_sets`  | `product`, `sets`, `withheld`, as described under `library` above |
 | `machine_settings` | `settings`: `{git, history, agents, shell, languages, extensions, servers}`, as `save_machine_settings` takes them |
+| `diagnostics` | `files`: `[{name, text}]`, in the order they go into the report |
 | `latest_release` | `version`: the version, or null when none was found; `url`: its page; `name`, `published`, `body` (markdown notes): each null when absent; `assets`: `[{name, url, size}]` |
 | `update_staged` | `path`: where the checked and unpacked update is, to install from |
 | `tool_listings` | `listings`: `[{id, title, description, name, target, env, inputs, asks, website}]` |

@@ -140,6 +140,10 @@ pub enum Shot {
     ToolSignIn,
     /// The workspace showing the code a GitHub Copilot sign-in waits for the reader to enter.
     SignInCode,
+    /// The workspace telling the reader the app crashed the last time, offering a bug report.
+    CrashNotice,
+    /// The workspace showing where the bug report the reader asked for was saved.
+    BugReportSaved,
     /// A session whose agent was at work when the window lost its connection to the agent's server.
     OutOfReach,
     /// The open session titled with two lines of text, of which the sidebar, the title bar and the header each show the first.
@@ -3446,6 +3450,16 @@ impl Shot {
                 "copilot",
                 "https://github.com/login/device".to_owned(),
                 "ABCD-1234".to_owned(),
+            )),
+            Self::CrashNotice => Screen::Workspace(workspace().with_crash_notice(
+                "called `Option::unwrap()` on a `None` value".to_owned(),
+                135,
+            )),
+            Self::BugReportSaved => Screen::Workspace(workspace().with_bug_report(
+                pm_components::bug_report::BugReport::Saved {
+                    path: "/home/reader/Downloads/pandemonium-bug-report-1795762774617.zip"
+                        .to_owned(),
+                },
             )),
             Self::PullRequest => {
                 let mut state = workspace();

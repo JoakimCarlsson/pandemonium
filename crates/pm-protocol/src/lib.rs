@@ -5,6 +5,7 @@ mod bytes;
 mod chat_search;
 mod credential;
 mod debug;
+mod diagnostics;
 mod extensions;
 mod history;
 mod machine;
@@ -23,6 +24,7 @@ pub use address::{
 pub use chat_search::{ChatField, ChatHit};
 pub use credential::{Build, Credential, Target};
 pub use debug::{DebugAction, DebugAdapter, DebugFile, DebugInfo, DebugProcess, DebugScenario};
+pub use diagnostics::DiagnosticFile;
 pub use extensions::{
     CAPABILITIES, ExtensionAssets, ExtensionCommand, ExtensionIcon, ExtensionIconTheme,
     ExtensionInfo, ExtensionTheme, GrammarBundle, GrammarMore,
