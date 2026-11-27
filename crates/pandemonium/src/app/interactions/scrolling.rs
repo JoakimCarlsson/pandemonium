@@ -43,14 +43,15 @@ fn prompt_offset(rig: &Rig) -> f32 {
     rig.read(|state| state.prompt_scroll.offset())
 }
 
-/// Whether the conversation shows its oldest entry and is scrolled exactly as far back as it
-/// can go, the room it has measured once that entry is laid out.
+/// Whether the conversation shows its oldest entry and is scrolled as far back as it can go,
+/// the room it has measured once that entry is laid out. The offset reached may pass that room
+/// by a rounding error until the next frame clamps it.
 fn at_start(rig: &Rig) -> bool {
     rig.read(|state| {
         let info = state.chat_list.layout_info();
         let oldest = info.total_items_count.checked_sub(1);
         let scroll = state.chat_list.scroll();
-        scroll.offset() == scroll.max_offset()
+        scroll.offset() >= scroll.max_offset()
             && info
                 .visible_items_info
                 .iter()

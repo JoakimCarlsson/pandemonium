@@ -6,7 +6,7 @@
   "type": "commonjs",
   "scripts": {
     "test": "node --test test/",
-    "e2e": "node --test --test-concurrency=1 e2e/"
+    "e2e": "node --test --test-concurrency=1 'e2e/*.test.js'"
   },
   "dependencies": {
     "@ghostery/adblocker-electron": "^2.20.3",

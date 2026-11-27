@@ -1635,6 +1635,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e"
 
 [[package]]
+name = "futures-executor"
+version = "0.3.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "031b47cf1a3c6cc8bc2fc76cd437f521619387907d469316e7c0bc278f1f5432"
+dependencies = [
+ "futures-core",
+ "futures-task",
+ "futures-util",
+]
+
+[[package]]
 name = "futures-io"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1728,6 +1739,18 @@ dependencies = [
 
 [[package]]
 name = "getrandom"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "r-efi 5.3.0",
+ "wasip2",
+]
+
+[[package]]
+name = "getrandom"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
@@ -1735,7 +1758,7 @@ dependencies = [
  "cfg-if",
  "js-sys",
  "libc",
- "r-efi",
+ "r-efi 6.0.0",
  "rand_core 0.10.1",
  "wasm-bindgen",
 ]
@@ -3030,6 +3053,7 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-core-graphics",
  "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
 ]
 
 [[package]]
@@ -3212,8 +3236,8 @@ dependencies = [
 
 [[package]]
 name = "omc-agent"
-version = "0.1.7"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
+version = "0.1.8"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.8#d68e0b8da9cf1c1485f0286a7d2ca46270d8c686"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3227,12 +3251,13 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
 name = "omc-auth"
-version = "0.1.7"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
+version = "0.1.8"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.8#d68e0b8da9cf1c1485f0286a7d2ca46270d8c686"
 dependencies = [
  "base64 0.23.1",
  "dirs",
@@ -3248,8 +3273,8 @@ dependencies = [
 
 [[package]]
 name = "omc-context"
-version = "0.1.7"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
+version = "0.1.8"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.8#d68e0b8da9cf1c1485f0286a7d2ca46270d8c686"
 dependencies = [
  "dirs",
  "ignore",
@@ -3258,8 +3283,8 @@ dependencies = [
 
 [[package]]
 name = "omc-dap"
-version = "0.1.7"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
+version = "0.1.8"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.8#d68e0b8da9cf1c1485f0286a7d2ca46270d8c686"
 dependencies = [
  "async-trait",
  "dirs",
@@ -3270,9 +3295,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "omc-diagnostics"
+version = "0.1.8"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.8#d68e0b8da9cf1c1485f0286a7d2ca46270d8c686"
+dependencies = [
+ "dirs",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "zip",
+]
+
+[[package]]
 name = "omc-extensions"
-version = "0.1.7"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
+version = "0.1.8"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.8#d68e0b8da9cf1c1485f0286a7d2ca46270d8c686"
 dependencies = [
  "async-trait",
  "dirs",
@@ -3287,8 +3330,8 @@ dependencies = [
 
 [[package]]
 name = "omc-hooks"
-version = "0.1.7"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
+version = "0.1.8"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.8#d68e0b8da9cf1c1485f0286a7d2ca46270d8c686"
 dependencies = [
  "async-trait",
  "dirs",
@@ -3310,8 +3353,8 @@ dependencies = [
 
 [[package]]
 name = "omc-mcp"
-version = "0.1.7"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
+version = "0.1.8"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.8#d68e0b8da9cf1c1485f0286a7d2ca46270d8c686"
 dependencies = [
  "async-trait",
  "dirs",
@@ -3329,8 +3372,8 @@ dependencies = [
 
 [[package]]
 name = "omc-memory"
-version = "0.1.7"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
+version = "0.1.8"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.8#d68e0b8da9cf1c1485f0286a7d2ca46270d8c686"
 dependencies = [
  "dirs",
  "omc-context",
@@ -3341,8 +3384,8 @@ dependencies = [
 
 [[package]]
 name = "omc-providers"
-version = "0.1.7"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
+version = "0.1.8"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.8#d68e0b8da9cf1c1485f0286a7d2ca46270d8c686"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3363,8 +3406,8 @@ dependencies = [
 
 [[package]]
 name = "omc-script"
-version = "0.1.7"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
+version = "0.1.8"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.8#d68e0b8da9cf1c1485f0286a7d2ca46270d8c686"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3378,8 +3421,8 @@ dependencies = [
 
 [[package]]
 name = "omc-session"
-version = "0.1.7"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
+version = "0.1.8"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.8#d68e0b8da9cf1c1485f0286a7d2ca46270d8c686"
 dependencies = [
  "async-trait",
  "dirs",
@@ -3400,12 +3443,13 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
 name = "omc-tools"
-version = "0.1.7"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
+version = "0.1.8"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.8#d68e0b8da9cf1c1485f0286a7d2ca46270d8c686"
 dependencies = [
  "ast-grep-core",
  "ast-grep-language",
@@ -3443,8 +3487,8 @@ dependencies = [
 
 [[package]]
 name = "omc-wire"
-version = "0.1.7"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
+version = "0.1.8"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.8#d68e0b8da9cf1c1485f0286a7d2ca46270d8c686"
 dependencies = [
  "serde",
  "serde_json",
@@ -3461,6 +3505,77 @@ name = "openssl-probe"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
+
+[[package]]
+name = "opentelemetry"
+version = "0.33.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c1f1a6ac9c875a4941e4c7c085b61e8f4daa326de03b4701768c3491a6ad9ee"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "js-sys",
+ "pin-project-lite",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
+name = "opentelemetry-http"
+version = "0.33.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "302249bd8ee804789faaa7b5b2cbf79bc61cb864714079c644e3828af5b7e811"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "http",
+ "opentelemetry",
+ "reqwest 0.13.5",
+]
+
+[[package]]
+name = "opentelemetry-otlp"
+version = "0.33.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0756af24841e367128ef31c831999937b8b5c5197d47914590d8f4e2e88c2e1a"
+dependencies = [
+ "http",
+ "httpdate",
+ "opentelemetry",
+ "opentelemetry-http",
+ "opentelemetry-proto",
+ "opentelemetry_sdk",
+ "prost",
+ "reqwest 0.13.5",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "opentelemetry-proto"
+version = "0.33.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d576f5dddc3299341bcd85a04be17b2564844c0c9563214f02d85f2524d1afae"
+dependencies = [
+ "opentelemetry",
+ "opentelemetry_sdk",
+ "prost",
+]
+
+[[package]]
+name = "opentelemetry_sdk"
+version = "0.33.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "372a912db2974d1990207006fd0e3aa0ef3fd4ad3be43c65cfaadf2206866061"
+dependencies = [
+ "futures-channel",
+ "futures-executor",
+ "futures-util",
+ "opentelemetry",
+ "percent-encoding",
+ "portable-atomic",
+ "rand 0.9.5",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "option-ext"
@@ -4002,6 +4117,7 @@ dependencies = [
  "getrandom 0.4.3",
  "mio",
  "notify",
+ "omc-diagnostics",
  "pm-agent-library",
  "pm-buffer",
  "pm-client",
@@ -4151,12 +4267,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
 
 [[package]]
-name = "pollster"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc6355899e1c9462875b6757c79f3caa011a1fdae12bbb1a2e72dd1f234f8336"
-
-[[package]]
 name = "polycool"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4284,6 +4394,29 @@ name = "profiling"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
+
+[[package]]
+name = "prost"
+version = "0.14.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ef0b569d1d907ab3a28596aee62cf1f61dacb0529a4bedcd8e7460e2d5228b4"
+dependencies = [
+ "bytes",
+ "prost-derive",
+]
+
+[[package]]
+name = "prost-derive"
+version = "0.14.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ad9c5423459fa2f729b8d9235fab810aa29628b171467744fc86d21460ad70d"
+dependencies = [
+ "anyhow",
+ "itertools",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "pulldown-cmark"
@@ -4414,6 +4547,12 @@ dependencies = [
 
 [[package]]
 name = "r-efi"
+version = "5.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
+
+[[package]]
+name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
@@ -4425,8 +4564,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e058c7de0b26af77780c769414d6257830bb240f3c38477dbc2c16e5f54d6d4c"
 dependencies = [
  "libc",
- "rand_chacha",
+ "rand_chacha 0.3.1",
  "rand_core 0.6.4",
+]
+
+[[package]]
+name = "rand"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
+dependencies = [
+ "rand_chacha 0.9.0",
+ "rand_core 0.9.5",
 ]
 
 [[package]]
@@ -4451,12 +4600,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand_chacha"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
+dependencies = [
+ "ppv-lite86",
+ "rand_core 0.9.5",
+]
+
+[[package]]
 name = "rand_core"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom 0.2.17",
+]
+
+[[package]]
+name = "rand_core"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
+dependencies = [
+ "getrandom 0.3.4",
 ]
 
 [[package]]
@@ -4681,6 +4849,7 @@ checksum = "16a1cfa75cc186dd73d5818e510e042e40927bccc9c236b061cea97e1eb08029"
 dependencies = [
  "base64 0.23.1",
  "bytes",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "http",
@@ -4748,7 +4917,7 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
  "percent-encoding",
- "pollster 0.4.0",
+ "pollster",
  "raw-window-handle",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -4902,14 +5071,18 @@ dependencies = [
 
 [[package]]
 name = "rustle"
-version = "0.1.2"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.2#94d8a9a3c497f0e2d14777c1a6962791fc67a5b3"
+version = "0.1.3"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.3#6c6ae591de98496bd2b57c80ff7179f31d47c5b6"
 dependencies = [
  "accesskit",
  "accesskit_macos",
  "accesskit_unix",
  "accesskit_windows",
  "arboard",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
  "rustix",
  "rustle-animation",
  "rustle-charts",
@@ -4935,8 +5108,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-animation"
-version = "0.1.2"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.2#94d8a9a3c497f0e2d14777c1a6962791fc67a5b3"
+version = "0.1.3"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.3#6c6ae591de98496bd2b57c80ff7179f31d47c5b6"
 dependencies = [
  "rustle-graphics",
  "rustle-runtime",
@@ -4944,8 +5117,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-charts"
-version = "0.1.2"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.2#94d8a9a3c497f0e2d14777c1a6962791fc67a5b3"
+version = "0.1.3"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.3#6c6ae591de98496bd2b57c80ff7179f31d47c5b6"
 dependencies = [
  "qrcode",
  "rustle-foundation",
@@ -4956,8 +5129,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-foundation"
-version = "0.1.2"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.2#94d8a9a3c497f0e2d14777c1a6962791fc67a5b3"
+version = "0.1.3"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.3#6c6ae591de98496bd2b57c80ff7179f31d47c5b6"
 dependencies = [
  "rustle-animation",
  "rustle-geometry",
@@ -4970,13 +5143,13 @@ dependencies = [
 
 [[package]]
 name = "rustle-geometry"
-version = "0.1.2"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.2#94d8a9a3c497f0e2d14777c1a6962791fc67a5b3"
+version = "0.1.3"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.3#6c6ae591de98496bd2b57c80ff7179f31d47c5b6"
 
 [[package]]
 name = "rustle-graphics"
-version = "0.1.2"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.2#94d8a9a3c497f0e2d14777c1a6962791fc67a5b3"
+version = "0.1.3"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.3#6c6ae591de98496bd2b57c80ff7179f31d47c5b6"
 dependencies = [
  "fontdb 0.24.0",
  "image",
@@ -4986,8 +5159,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-icons"
-version = "0.1.2"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.2#94d8a9a3c497f0e2d14777c1a6962791fc67a5b3"
+version = "0.1.3"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.3#6c6ae591de98496bd2b57c80ff7179f31d47c5b6"
 dependencies = [
  "rustle-graphics",
  "rustle-icons-macros",
@@ -4995,16 +5168,16 @@ dependencies = [
 
 [[package]]
 name = "rustle-icons-macros"
-version = "0.1.2"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.2#94d8a9a3c497f0e2d14777c1a6962791fc67a5b3"
+version = "0.1.3"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.3#6c6ae591de98496bd2b57c80ff7179f31d47c5b6"
 dependencies = [
  "svgtypes",
 ]
 
 [[package]]
 name = "rustle-macros"
-version = "0.1.2"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.2#94d8a9a3c497f0e2d14777c1a6962791fc67a5b3"
+version = "0.1.3"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.3#6c6ae591de98496bd2b57c80ff7179f31d47c5b6"
 dependencies = [
  "quote",
  "syn 3.0.9",
@@ -5012,26 +5185,26 @@ dependencies = [
 
 [[package]]
 name = "rustle-navigation"
-version = "0.1.2"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.2#94d8a9a3c497f0e2d14777c1a6962791fc67a5b3"
+version = "0.1.3"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.3#6c6ae591de98496bd2b57c80ff7179f31d47c5b6"
 dependencies = [
  "rustle-runtime",
 ]
 
 [[package]]
 name = "rustle-runtime"
-version = "0.1.2"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.2#94d8a9a3c497f0e2d14777c1a6962791fc67a5b3"
+version = "0.1.3"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.3#6c6ae591de98496bd2b57c80ff7179f31d47c5b6"
 
 [[package]]
 name = "rustle-shaders"
-version = "0.1.2"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.2#94d8a9a3c497f0e2d14777c1a6962791fc67a5b3"
+version = "0.1.3"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.3#6c6ae591de98496bd2b57c80ff7179f31d47c5b6"
 
 [[package]]
 name = "rustle-text"
-version = "0.1.2"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.2#94d8a9a3c497f0e2d14777c1a6962791fc67a5b3"
+version = "0.1.3"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.3#6c6ae591de98496bd2b57c80ff7179f31d47c5b6"
 dependencies = [
  "rustle-geometry",
  "rustle-graphics",
@@ -5039,8 +5212,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-ui"
-version = "0.1.2"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.2#94d8a9a3c497f0e2d14777c1a6962791fc67a5b3"
+version = "0.1.3"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.3#6c6ae591de98496bd2b57c80ff7179f31d47c5b6"
 dependencies = [
  "rustle-geometry",
  "rustle-graphics",
@@ -5051,21 +5224,21 @@ dependencies = [
 
 [[package]]
 name = "rustle-unit"
-version = "0.1.2"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.2#94d8a9a3c497f0e2d14777c1a6962791fc67a5b3"
+version = "0.1.3"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.3#6c6ae591de98496bd2b57c80ff7179f31d47c5b6"
 dependencies = [
  "rustle-geometry",
 ]
 
 [[package]]
 name = "rustle-wgpu"
-version = "0.1.2"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.2#94d8a9a3c497f0e2d14777c1a6962791fc67a5b3"
+version = "0.1.3"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.3#6c6ae591de98496bd2b57c80ff7179f31d47c5b6"
 dependencies = [
  "bytemuck",
  "cosmic-text",
+ "foldhash 0.2.0",
  "glyphon",
- "pollster 1.0.1",
  "rustle-geometry",
  "rustle-graphics",
  "rustle-shaders",
@@ -5076,8 +5249,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-widgets"
-version = "0.1.2"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.2#94d8a9a3c497f0e2d14777c1a6962791fc67a5b3"
+version = "0.1.3"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.3#6c6ae591de98496bd2b57c80ff7179f31d47c5b6"
 dependencies = [
  "rustle-animation",
  "rustle-foundation",
@@ -5390,6 +5563,15 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
  "digest 0.11.3",
+]
+
+[[package]]
+name = "sharded-slab"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
+dependencies = [
+ "lazy_static",
 ]
 
 [[package]]
@@ -5814,6 +5996,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "thread_local"
+version = "1.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ad99c4c6d32803332c548b1af0540b357b3f5fc0be8f6c6bfe8b2e6ae784070"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "tiff"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6076,6 +6267,45 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
+ "valuable",
+]
+
+[[package]]
+name = "tracing-log"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee855f1f400bd0e5c02d150ae5de3840039a3f54b025156404e34c23c03f47c3"
+dependencies = [
+ "log",
+ "once_cell",
+ "tracing-core",
+]
+
+[[package]]
+name = "tracing-opentelemetry"
+version = "0.34.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a904802a1b902f43638b677ff2a650847e3b4404101b6c586d648e8c1e3e8fe"
+dependencies = [
+ "js-sys",
+ "opentelemetry",
+ "smallvec",
+ "tracing",
+ "tracing-core",
+ "tracing-log",
+ "tracing-subscriber",
+ "web-time",
+]
+
+[[package]]
+name = "tracing-subscriber"
+version = "0.3.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb7f578e5945fb242538965c2d0b04418d38ec25c79d160cd279bf0731c8d319"
+dependencies = [
+ "sharded-slab",
+ "thread_local",
+ "tracing-core",
 ]
 
 [[package]]
@@ -6463,6 +6693,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "valuable"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
+
+[[package]]
 name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6508,6 +6744,15 @@ name = "wasi"
 version = "0.11.1+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
+
+[[package]]
+name = "wasip2"
+version = "1.0.4+wasi-0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
+dependencies = [
+ "wit-bindgen",
+]
 
 [[package]]
 name = "wasm-bindgen"
@@ -7713,6 +7958,12 @@ checksum = "80d0f4e272c85def139476380b12f9ac60926689dd2e01d4923222f40580869d"
 dependencies = [
  "winapi",
 ]
+
+[[package]]
+name = "wit-bindgen"
+version = "0.57.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "wl-clipboard-rs"
