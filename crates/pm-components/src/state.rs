@@ -2892,8 +2892,10 @@ impl WorkspaceState {
     /// its place. A question asked on the side with `/btw` is handed over
     /// as a queued prompt is, shown as nothing until its answer comes. While
     /// a waiting prompt is being edited, it saves the edit instead, and the
-    /// command that switches orchestrator mode is answered here and not sent.
+    /// command that switches orchestrator mode is answered here and not sent. Whatever it does,
+    /// a reply being paced shows at once all that has arrived of it.
     fn send(&mut self, now: bool) {
+        crate::pacing::catch_up();
         if self.editing_queued.is_some() {
             self.save_queued_edit();
             return;

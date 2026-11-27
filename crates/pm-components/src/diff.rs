@@ -710,6 +710,21 @@ enum Item {
 }
 
 impl Item {
+    /// The item with its file's index taken out, which with a hash of the file's path keys it
+    /// in the list: a file added or removed above leaves the keys of the files below as they
+    /// were, so the list keeps the lengths it measured for them.
+    fn within_file(self) -> Self {
+        match self {
+            Self::Header(_) => Self::Header(0),
+            Self::Reading(_) => Self::Reading(0),
+            Self::FileForm(_) => Self::FileForm(0),
+            Self::FileNote(_, nth) => Self::FileNote(0, nth),
+            Self::Row(_, position) => Self::Row(0, position),
+            Self::Form(_, position) => Self::Form(0, position),
+            Self::Note(_, nth) => Self::Note(0, nth),
+        }
+    }
+
     /// The index of the file the item is part of.
     fn file(self) -> usize {
         match self {
@@ -821,6 +836,21 @@ pub(crate) fn item_files(state: &WorkspaceState, session: &Session) -> Vec<usize
     items(state, session, &shown_rows(state, session))
         .into_iter()
         .map(Item::file)
+        .collect()
+}
+
+/// A name for each item in the diff's lazy list of `session`, as `state` shows it, the same for the same part of the same file wherever the item is: its file's path and what part of it the item is.
+#[cfg(test)]
+pub(crate) fn item_names(state: &WorkspaceState, session: &Session) -> Vec<String> {
+    items(state, session, &shown_rows(state, session))
+        .into_iter()
+        .map(|item| {
+            format!(
+                "{}:{:?}",
+                session.changes[item.file()].path,
+                item.within_file()
+            )
+        })
         .collect()
 }
 
@@ -1122,7 +1152,7 @@ pub fn diff(state: &WorkspaceState, session: &Session, width: f32) {
                 shown.layout.items.len(),
                 |at| {
                     let item = shown.layout.items[at];
-                    (shown.layout.file_keys[item.file()], item)
+                    (shown.layout.file_keys[item.file()], item.within_file())
                 },
                 |at| shown.item(at),
             );

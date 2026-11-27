@@ -33,6 +33,9 @@ pub struct Model {
     /// The generation of the words streamed into conversations, which only the regions that
     /// can show one follow.
     conversation: rustle::State<u64>,
+    /// The generation of what streamed words and reading them change of the sidebar and the
+    /// title bar, which only those follow.
+    chrome: rustle::State<u64>,
     /// Handles to the generations that the views are given, so the regions of the screen
     /// follow them themselves.
     observed: ScreenState,
@@ -44,11 +47,13 @@ impl Model {
         let state = Rc::new(RefCell::new(screen));
         let generation = rustle::mutable_state(0u64);
         let conversation = rustle::mutable_state(0u64);
+        let chrome = rustle::mutable_state(0u64);
         Self {
-            observed: ScreenState::new(generation.clone(), conversation.clone()),
+            observed: ScreenState::new(generation.clone(), conversation.clone(), chrome.clone()),
             state,
             screen: generation,
             conversation,
+            chrome,
         }
     }
 
@@ -78,6 +83,34 @@ impl Model {
         self.update(|screen| *screen = std::mem::take(screen).in_workspace(change));
     }
 
+    /// Changes the screen in place through `change`, a change that only the conversations and
+    /// the chrome show, such as which updates were read: it composes again the regions that
+    /// show a conversation and, when the sidebar or the title bar shows it, those.
+    pub fn update_read(&self, change: impl FnOnce(&mut Screen)) {
+        let before = self.read(chrome);
+        self.update_conversation(change);
+        let after = self.read(chrome);
+        if before.is_none() || after.is_none() {
+            self.update(|_| {});
+        } else if after != before {
+            self.chrome.update(|generation| *generation += 1);
+        }
+    }
+
+    /// Takes in what the agent of the session at `session` did, as `event`: words it streams
+    /// move on only the generation of the conversations, and the chrome's as well when they
+    /// change the sidebar or the title bar; anything else moves on the screen's.
+    pub fn hear(&self, session: usize, event: pm_harness::Event) {
+        if matches!(
+            event,
+            pm_harness::Event::Said(_) | pm_harness::Event::Thought(_)
+        ) {
+            self.update_read(|screen| screen.hear_in_place(session, event));
+        } else {
+            self.update(|screen| screen.hear_in_place(session, event));
+        }
+    }
+
     /// The generations of the screen and of its conversations as they are now, which move on
     /// with every change of either, read without composing anything again for them.
     pub fn generations(&self) -> (u64, u64) {
@@ -92,6 +125,24 @@ impl Model {
     /// The handle to the screen's generations the views are given.
     pub fn observed(&self) -> ScreenState {
         self.observed.clone()
+    }
+}
+
+/// What the window shows of `screen` outside its conversations that the words an agent
+/// streams could change: the sidebar and the title bar; nothing while the history page,
+/// which shows the conversations' words, is open.
+fn chrome(
+    screen: &Screen,
+) -> Option<(
+    pm_components::sidebar::SidebarState,
+    pm_components::title_bar::TitleBar,
+)> {
+    match screen {
+        Screen::Workspace(state) if state.page != pm_components::state::Page::History => Some((
+            pm_components::sidebar::SidebarState::of(state),
+            pm_components::title_bar::TitleBar::of(state),
+        )),
+        _ => None,
     }
 }
 
@@ -171,6 +222,45 @@ mod tests {
         assert_eq!(
             model.conversation.with(|generation| *generation),
             conversation + 1
+        );
+    }
+
+    /// Words an agent streams move on the conversations' generation, and the chrome's only
+    /// when the sidebar or the title bar shows them, and leave a block that read the screen as
+    /// it was.
+    #[test]
+    fn streamed_words_leave_the_screen_readers() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let model = Model::new(Screen::Workspace(crate::snapshot::heavy_workspace()));
+        let runs = Rc::new(Cell::new(0));
+        let (reading, counted) = (model.clone(), Rc::clone(&runs));
+        let mut ui = rustle::Embedded::without_renderer(
+            move || {
+                let (reading, counted) = (reading.clone(), Rc::clone(&counted));
+                rustle::skippable((), move || {
+                    reading.read(|_| ());
+                    counted.set(counted.get() + 1);
+                });
+            },
+            || {},
+        );
+        ui.resize((100, 100), 1.0);
+        ui.update();
+        let before = runs.get();
+        let (screen, conversation) = model.generations();
+        let chrome = model.chrome.with(|generation| *generation);
+        let chrome_of = super::chrome;
+        model.hear(0, pm_harness::Event::Said("More words.".to_owned()));
+        ui.update();
+        assert_eq!(runs.get(), before);
+        assert_eq!(model.generations(), (screen, conversation + 1));
+        let sidebar_changed = model.chrome.with(|generation| *generation) != chrome;
+        let shown = model.read(chrome_of);
+        model.hear(0, pm_harness::Event::Said("Yet more words.".to_owned()));
+        assert_eq!(
+            model.chrome.with(|generation| *generation) != chrome + u64::from(sidebar_changed),
+            model.read(chrome_of) != shown
         );
     }
 }

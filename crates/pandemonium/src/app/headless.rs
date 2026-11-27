@@ -327,10 +327,7 @@ impl Rig {
     /// Hands the open session's agent event `event` to the screen, as the
     /// work does when the agent says something, and comes to rest.
     pub(super) fn hear(&mut self, event: pm_harness::Event) {
-        self.app
-            .borrow()
-            .model
-            .change(|state| state.heard(0, event));
+        self.app.borrow().model.hear(0, event);
         self.settle();
     }
 

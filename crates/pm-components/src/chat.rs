@@ -610,23 +610,31 @@ pub fn chat(state: &WorkspaceState, session: &Session, width: f32, above: f32) {
 /// Emits `content`, the conversation's list, as the selectable text of the conversation: a
 /// selection container holding the workspace's selection of it, filling the rest of the
 /// column, which tells the app when the primary button goes down inside it, so a press there
-/// keeps its selection.
+/// keeps its selection. A press or a scroll inside it reveals at once what a reply being
+/// paced holds back.
 fn conversation_text(state: &WorkspaceState, content: impl FnOnce()) {
     let operations = crate::events::operations();
     let pressed = Modifier::new().on_pointer_event(
         rustle::PointerEventType::Press,
         rustle::PointerEventPass::Initial,
         move |event| {
+            crate::pacing::catch_up();
             if event.button == Some(rustle::PointerButton::Primary) {
                 operations.conversation_pressed();
             }
         },
     );
+    let scrolled = Modifier::new().on_pointer_event(
+        rustle::PointerEventType::Scroll,
+        rustle::PointerEventPass::Initial,
+        |_| crate::pacing::catch_up(),
+    );
     rustle::selection_container_with(
         state
             .chat_bounds
             .track(Modifier::new().fill_max_width().weight(1.0))
-            .chain(pressed),
+            .chain(pressed)
+            .chain(scrolled),
         &state.chat_selection,
         content,
     );
@@ -1034,6 +1042,68 @@ mod tests {
         shown.settle();
         let again = shown.message(index).expect("in view again");
         assert!((again.origin.y - before.origin.y).abs() < 1.0);
+    }
+
+    /// The conversation of `held` with the agent on its last message, `count` messages long.
+    fn working(count: usize) -> Rc<RefCell<WorkspaceState>> {
+        let held = long_conversation(count);
+        {
+            let mut state = held.borrow_mut();
+            let session = &mut state.sessions[0];
+            session.status = Status::Working;
+            session.messages[count - 1].duration = None;
+        }
+        held
+    }
+
+    /// How tall message `index` of `held` is once all its text is shown, as a list composed
+    /// afresh after the agent finished shows it.
+    fn finished_height(held: &Rc<RefCell<WorkspaceState>>, index: usize) -> f32 {
+        let mut fresh = held.borrow().clone();
+        fresh.chat_list = rustle::LazyListState::default();
+        fresh.sessions[0].status = Status::Idle;
+        let fresh = Shown::new(&Rc::new(RefCell::new(fresh)));
+        fresh
+            .message(index)
+            .expect("the message is drawn")
+            .size
+            .height
+    }
+
+    /// Asking to catch up while the reply is paced behind shows all its text at once.
+    #[test]
+    fn catching_up_shows_all_of_a_paced_reply() {
+        let held = working(30);
+        let mut shown = Shown::new(&held);
+        write_on(&held, 29);
+        shown.settle();
+        let full = finished_height(&held, 29);
+        let paced = shown.message(29).unwrap().size.height;
+        assert!(paced < full - 1.0, "{paced} against {full}");
+        crate::pacing::catch_up();
+        shown.settle();
+        let caught = shown.message(29).unwrap().size.height;
+        assert!((caught - full).abs() < 1.0, "{caught} against {full}");
+    }
+
+    /// While the reader is scrolled back, what they read stays where it is when the reply
+    /// paced below it is caught up.
+    #[test]
+    fn a_reader_scrolled_back_keeps_their_place_when_a_reply_catches_up() {
+        let held = working(60);
+        held.borrow().chat_list.scroll().jump_to(300.0);
+        let mut shown = Shown::new(&held);
+        let (index, before) = shown
+            .messages()
+            .into_iter()
+            .find(|(_, rect)| (100.0..800.0).contains(&rect.origin.y))
+            .expect("a message in view");
+        write_on(&held, 59);
+        shown.settle();
+        crate::pacing::catch_up();
+        shown.settle();
+        let after = shown.message(index).unwrap();
+        assert!((after.origin.y - before.origin.y).abs() < 1.0);
     }
 
     /// Typing in the prompt keeps messages as they were, while streamed text and opened

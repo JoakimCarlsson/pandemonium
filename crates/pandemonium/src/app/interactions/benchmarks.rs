@@ -281,3 +281,13 @@ fn benchmark_interactions_scroll_views() {
         scroll_through(&mut rig, &format!("{view} flick"), 400.0, 100);
     }
 }
+
+/// Scrolls a file of a hundred thousand lines alone in the window, as a trackpad
+/// does in small steps and as a flick does in large ones.
+#[test]
+#[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_interactions -- --ignored --nocapture --test-threads=1"]
+fn benchmark_interactions_scroll_huge_code() {
+    let mut rig = Rig::new(Screen::Workspace(crate::snapshot::huge_code()), SIZE);
+    scroll_through(&mut rig, "huge code trackpad", 8.0, 300);
+    scroll_through(&mut rig, "huge code flick", 400.0, 100);
+}

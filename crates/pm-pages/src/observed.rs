@@ -4,10 +4,12 @@
 //! which changes only sizes held apart from the screen, leaves the regions whose room did
 //! not change as they were.
 //!
-//! The screen's changes are counted by two generations: one for every change but the words
-//! an agent streams into a conversation, and one for those. The regions that can show a
-//! conversation follow both; the rest of the window, keyed on the first, is left as it was
-//! while an agent writes.
+//! The screen's changes are counted by three generations: one for every change but the words
+//! an agent streams into a conversation and whether they were read, one for those words, and
+//! one for what they change of the window's chrome, the sidebar and the title bar. The regions
+//! that can show a conversation follow the first two, the chrome follows the first and the
+//! last, and the rest of the window, keyed on the first, is left as it was while an agent
+//! writes.
 
 use std::rc::Rc;
 
@@ -24,15 +26,23 @@ struct Generations {
     screen: rustle::State<u64>,
     /// The generation of the words streamed into conversations.
     conversation: rustle::State<u64>,
+    /// The generation of what streamed words and reading them change of the chrome.
+    chrome: rustle::State<u64>,
 }
 
 impl ScreenState {
-    /// Handles to the generations `screen`, of the screen's changes, and `conversation`, of
-    /// what is streamed into its conversations.
-    pub fn new(screen: rustle::State<u64>, conversation: rustle::State<u64>) -> Self {
+    /// Handles to the generations `screen`, of the screen's changes, `conversation`, of what
+    /// is streamed into its conversations, and `chrome`, of what that and reading it change
+    /// of the sidebar and the title bar.
+    pub fn new(
+        screen: rustle::State<u64>,
+        conversation: rustle::State<u64>,
+        chrome: rustle::State<u64>,
+    ) -> Self {
         Self(Rc::new(Generations {
             screen,
             conversation,
+            chrome,
         }))
     }
 }
@@ -52,13 +62,16 @@ pub fn provide<R>(screen: ScreenState, content: impl FnOnce() -> R) -> R {
     LOCAL_SCREEN.provide(Some(screen), content)
 }
 
-/// The generation of the screen being composed, which moves on with every change of it but
-/// the words streamed into its conversations, when one that changes is provided; nothing for
-/// a screen shown once.
-pub(crate) fn screen_generation() -> Option<u64> {
-    LOCAL_SCREEN
-        .current()
-        .map(|screen| screen.0.screen.with(|generation| *generation))
+/// The generation of the screen being composed with that of its chrome, which moves on when
+/// streamed words or reading them change the sidebar or the title bar, when one that changes
+/// is provided; nothing for a screen shown once.
+pub(crate) fn chrome_generation() -> Option<(u64, u64)> {
+    LOCAL_SCREEN.current().map(|screen| {
+        (
+            screen.0.screen.with(|generation| *generation),
+            screen.0.chrome.with(|generation| *generation),
+        )
+    })
 }
 
 /// Composes `content`, a region of the screen given the room `room` (the sizes it lays

@@ -18,7 +18,7 @@ use pm_components::{adder, history, plan, review, settings, sidebar};
 
 pub use pm_components::state::{Outgoing, WorkspaceState};
 
-use crate::observed::{quiet_region, region, screen_generation};
+use crate::observed::{chrome_generation, quiet_region, region};
 use pm_components::sash::Sash;
 use pm_components::state::Page;
 
@@ -63,7 +63,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
     let paned = state.paned();
     let inner = state.inner_sizes();
     let scales = (theme::step_scale(), theme::text_scale());
-    let generation = screen_generation();
+    let generation = chrome_generation();
     let frame = state.code_lines.frame(Modifier::new().fill_max_size());
     keyboard_asks(state);
     rustle::stack_with(frame, || {
@@ -77,16 +77,15 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
                 || {
                     match generation {
                         Some(generation) => {
-                            rustle::skippable((generation, width, height, inner, scales), || {
+                            rustle::kept((generation, width, height, inner, scales), || {
                                 TitleBar::of(state).build()
                             })
                         }
                         None => {
                             let bar = TitleBar::of(state);
-                            rustle::skippable(
-                                (bar.clone(), width, height, inner, scales),
-                                move || bar.build(),
-                            );
+                            rustle::kept((bar.clone(), width, height, inner, scales), move || {
+                                bar.build()
+                            });
                         }
                     }
                     row_arranged(
@@ -96,13 +95,14 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
                         || {
                             if state.sidebar_open {
                                 match generation {
-                                    Some(generation) => rustle::skippable(
-                                        (generation, sidebar_width, scales),
-                                        || sidebar::sidebar(&sidebar::SidebarState::of(state)),
-                                    ),
+                                    Some(generation) => {
+                                        rustle::kept((generation, sidebar_width, scales), || {
+                                            sidebar::sidebar(&sidebar::SidebarState::of(state))
+                                        })
+                                    }
                                     None => {
                                         let view = sidebar::SidebarState::of(state);
-                                        rustle::skippable((view.clone(), scales), move || {
+                                        rustle::kept((view.clone(), scales), move || {
                                             sidebar::sidebar(&view);
                                         });
                                     }
@@ -123,14 +123,14 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
                                 _ if paned => panes::main_area(state, (width, height)),
                                 Page::History => {
                                     let view = history::HistoryState::of(state);
-                                    rustle::skippable((view.clone(), scales), move || {
+                                    rustle::kept((view.clone(), scales), move || {
                                         history::history(&view);
                                     });
                                 }
                                 Page::Extensions => {
                                     let view =
                                         pm_components::extensions::ExtensionsState::of(state);
-                                    rustle::skippable((view.clone(), scales), move || {
+                                    rustle::kept((view.clone(), scales), move || {
                                         pm_components::extensions::extensions(&view);
                                     });
                                 }
@@ -142,7 +142,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
                                     .build();
                                 let scroll = state.plan_scroll.clone();
                                 let source = source.to_owned();
-                                rustle::skippable(
+                                rustle::kept(
                                     (source.clone(), scroll.clone(), plan_width, height, scales),
                                     move || plan::panel(&scroll, &source, plan_width),
                                 );

@@ -213,17 +213,24 @@ fn arrows_and_home_follow_the_lines_as_drawn() {
     rig.chord(CONTROL, Key::End);
     rig.key(Key::ArrowUp);
     rig.key(Key::Home);
-    let rest = rig
+    let (before, rest) = rig
         .read(|screen| {
             screen
                 .text_field(Target::Composer(ComposerEvent::Prompt))
                 .map(|field| {
                     let value = field.value();
-                    value.text.chars().skip(value.cursor).collect::<String>()
+                    let before: String = value.text.chars().take(value.cursor).collect();
+                    let rest: String = value.text.chars().skip(value.cursor).collect();
+                    (before, rest)
                 })
         })
         .unwrap_or_default();
-    assert!(rest.starts_with("stores the offset."), "{rest:?}");
+    assert!(before.ends_with(' '), "{before:?} | {rest:?}");
+    assert!(
+        rest.ends_with("stores the offset.\nThen write the fix.")
+            && rest.matches('\n').count() == 1,
+        "{before:?} | {rest:?}"
+    );
 }
 
 /// What is selected in a key box stays off the clipboard, and cutting it takes

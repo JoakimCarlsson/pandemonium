@@ -439,7 +439,7 @@ impl App {
             if state.conversation_observation_pending(visible, at_end, focused))
         });
         if pending {
-            self.model.update(|state| {
+            self.model.update_read(|state| {
                 state.observe_conversation(visible, at_end, focused);
             });
         }

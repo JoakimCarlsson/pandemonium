@@ -214,6 +214,12 @@ impl Document {
         }
     }
 
+    /// How many rows come before each line, with one more for the end of the text, when a row has room for `columns` characters or some lines have a row of links above them, a hidden line taking none; `None` when every line that shows takes one row, so that a line's row is its place among those that show.
+    pub fn row_starts(&self, columns: Option<usize>) -> Option<Arc<Vec<usize>>> {
+        self.with_lens_rows(columns)
+            .map(|columns| self.rows_before(columns))
+    }
+
     /// The first row the line at `index` is drawn in when a row has room for `columns` characters; a hidden line is drawn in the rows of the line that stands for it.
     pub fn wrapped_row_of_line(&self, index: usize, columns: Option<usize>) -> usize {
         let Some(columns) = self.with_lens_rows(columns) else {

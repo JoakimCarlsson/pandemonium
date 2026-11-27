@@ -2813,6 +2813,19 @@ pub(crate) fn large_diff() -> WorkspaceState {
 /// changed against its base.
 #[cfg(test)]
 pub(crate) fn large_code() -> WorkspaceState {
+    code_of_lines(20_000)
+}
+
+/// A huge file for measuring scrolling: [`large_code`] with a hundred thousand lines.
+#[cfg(test)]
+pub(crate) fn huge_code() -> WorkspaceState {
+    code_of_lines(100_000)
+}
+
+/// A Rust file of `lines` lines open alone in the window, highlighted, with every
+/// fiftieth line changed against its base.
+#[cfg(test)]
+fn code_of_lines(lines: usize) -> WorkspaceState {
     let line = |index: usize, changed: bool| {
         let call = if changed { "compute_faster" } else { "compute" };
         match index % 5 {
@@ -2823,10 +2836,10 @@ pub(crate) fn large_code() -> WorkspaceState {
             _ => "}\n".to_owned(),
         }
     };
-    let text: String = (0..20_000)
+    let text: String = (0..lines)
         .map(|index| line(index, index % 50 == 2))
         .collect();
-    let base: String = (0..20_000).map(|index| line(index, false)).collect();
+    let base: String = (0..lines).map(|index| line(index, false)).collect();
     let mut state = code();
     state.review = false;
     state
@@ -6975,9 +6988,9 @@ mod pointer_tests {
     #[test]
     fn the_pointer_shows_hover_and_tooltips() {
         let bare = workspace_pixels(None);
-        let row = changed(&bare, &workspace_pixels(Some((120.0, 336.0))));
+        let row = changed(&bare, &workspace_pixels(Some((120.0, 146.0))));
         assert!(row > 0, "a hovered row looks the same");
-        let button = changed(&bare, &workspace_pixels(Some((1062.0, 19.0))));
+        let button = changed(&bare, &workspace_pixels(Some((1176.0, 19.0))));
         assert!(button > 28 * 28, "no tooltip under the title-bar button");
     }
 }

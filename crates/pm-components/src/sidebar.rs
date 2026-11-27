@@ -244,6 +244,14 @@ fn glyph_row(tile: Tile, icon: Icon, label: &str, selected: bool) {
 /// Emits the row of one session, `row`, set in `indent` steps.
 #[track_caller]
 fn session_row(row: &SessionRow, selected: bool, indent: f32) {
+    rustle::kept((row.clone(), selected, indent.to_bits()), || {
+        session_row_content(row, selected, indent);
+    });
+}
+
+/// Emits the row of the session `row` describes, as [`session_row`] does, every time.
+#[track_caller]
+fn session_row_content(row: &SessionRow, selected: bool, indent: f32) {
     let operations = crate::events::operations();
     let index = row.position;
     tile(

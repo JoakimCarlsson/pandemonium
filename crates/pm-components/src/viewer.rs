@@ -857,6 +857,13 @@ fn line_padding() -> f32 {
     theme::sp(2)
 }
 
+/// The row of the list of a file's lines at `offset` along it, rows `row` logical pixels tall,
+/// counting the part of it scrolled out: worked out from the offset alone, so it is exact
+/// wherever the list is scrolled, whether or not the lines there are composed yet.
+fn list_row(offset: f32, row: f32) -> f32 {
+    ((offset - line_padding()) / row.max(1.0)).max(0.0)
+}
+
 /// How often the work on a text under way away from the thread that draws is looked in on.
 const SETTLE_POLL: std::time::Duration = std::time::Duration::from_millis(8);
 
@@ -881,7 +888,93 @@ fn settle(document: &Document) {
     settled.get();
 }
 
+/// How many rows the note that the rest of a file cut short is not shown takes, below its last line.
+const NOTE_ROWS: usize = 2;
+
+/// The rows the items of the list of a file's lines take: each line that shows takes the rows it wraps into, with the row of links above it, as the wrap index of the document counts them, and the note of a file cut short takes [`NOTE_ROWS`] after them.
+struct DocumentRows<'a> {
+    /// The file the lines are of.
+    document: &'a Document,
+    /// How many lines show.
+    shown: usize,
+    /// How many rows come before each line, with one more for the end of the text, when lines do not take one row each.
+    starts: Option<std::sync::Arc<Vec<usize>>>,
+    /// Whether the list ends with the note of a file cut short.
+    note: bool,
+}
+
+impl<'a> DocumentRows<'a> {
+    /// The rows of the lines of `document` when rows hold `columns` characters as lines wrap.
+    fn new(document: &'a Document, columns: Option<usize>) -> Self {
+        Self {
+            document,
+            shown: document.rows(),
+            starts: document.row_starts(columns),
+            note: document.truncated,
+        }
+    }
+
+    /// How many rows the lines that show take.
+    fn text_rows(&self) -> usize {
+        self.starts
+            .as_ref()
+            .and_then(|starts| starts.last().copied())
+            .unwrap_or(self.shown)
+    }
+}
+
+impl rustle::UniformRows for DocumentRows<'_> {
+    /// The lines that show and the note of a file cut short.
+    fn items(&self) -> usize {
+        self.shown + usize::from(self.note)
+    }
+
+    /// The rows of the lines that show and of the note.
+    fn rows(&self) -> usize {
+        self.text_rows() + if self.note { NOTE_ROWS } else { 0 }
+    }
+
+    /// The first row of the line that shows at `item`, or of the note after them.
+    fn first_row(&self, item: usize) -> usize {
+        if item >= self.items() {
+            return self.rows();
+        }
+        if item >= self.shown {
+            return self.text_rows();
+        }
+        match (&self.starts, self.document.shown_line(item)) {
+            (Some(starts), Some(line)) => starts.get(line).copied().unwrap_or(self.text_rows()),
+            _ => item,
+        }
+    }
+
+    /// The item of the line drawn in `row`, or of the note.
+    fn item_at_row(&self, row: usize) -> usize {
+        if row >= self.rows() {
+            return self.items();
+        }
+        if row >= self.text_rows() {
+            return self.shown;
+        }
+        match &self.starts {
+            Some(starts) => {
+                let lines = starts.len().saturating_sub(1);
+                let line = starts[1..=lines].partition_point(|end| *end <= row);
+                self.document.row_of_line(line).min(self.shown)
+            }
+            None => row,
+        }
+    }
+
+    /// Whether every line takes one row and no note follows them.
+    fn one_per_row(&self) -> bool {
+        self.starts.is_none() && !self.note
+    }
+}
+
 /// Emits the lines of `document` that show as a lazy list with `modifier`, scrolled by `scroll` in a view `height` tall, each drawn as `look` says, followed by a note when the file was cut short.
+///
+/// Every row is as tall as the settings say, so the list finds the lines in view by arithmetic on the rows each line takes, without measuring a line.
 #[track_caller]
 fn lines(
     document: &Document,
@@ -892,7 +985,6 @@ fn lines(
 ) {
     let settings = look.settings;
     settle(document);
-    let rows = document.rows();
     let pair: Vec<Range<usize>> = document
         .syntax
         .as_ref()
@@ -904,11 +996,12 @@ fn lines(
     } else {
         0.0
     };
-    rustle::lazy_list_with(
+    rustle::uniform_list_with(
         modifier,
         scroll,
         rustle::LazyContent::new().padding_each(line_padding(), line_padding() + beyond),
-        rows + usize::from(document.truncated),
+        settings.row_height(),
+        &DocumentRows::new(document, look.columns),
         |item| document.shown_line(item).unwrap_or(usize::MAX),
         |item| match document.shown_line(item) {
             Some(index) => shown_line(document, index, &pair, look),
@@ -946,13 +1039,13 @@ impl Viewer {
         let (Some(document), false) = (self.document(), shows_rendering(self)) else {
             return self.scroll.scroll().offset() / row;
         };
-        let Some(item) = self.scroll.first_visible_item() else {
-            return 0.0;
-        };
+        let rows = DocumentRows::new(document, columns);
+        let along = list_row(self.scroll.scroll().offset(), row);
+        let item = rustle::UniformRows::item_at_row(&rows, along.floor() as usize);
         match document.shown_lines(item, 1).first() {
             Some(&line) => {
-                document.wrapped_row_of_line(line, columns) as f32
-                    + self.scroll.first_visible_item_scroll_offset() / row
+                document.wrapped_row_of_line(line, columns) as f32 + along
+                    - rustle::UniformRows::first_row(&rows, item) as f32
             }
             None => document.wrapped_rows(columns) as f32,
         }
@@ -1127,15 +1220,9 @@ pub fn viewer(state: &WorkspaceState, width: f32, height: f32) {
 /// the sticky lines and the minimap follow it by rows.
 #[track_caller]
 fn top_in_rows(viewer: &Viewer, columns: Option<usize>, row: f32) -> f32 {
-    let scroll = viewer.scroll.clone();
+    let scroll = viewer.scroll.scroll().clone();
     let rows = row.max(1.0);
-    rustle::watched_state_of(move || {
-        (
-            scroll.first_visible_item(),
-            (scroll.first_visible_item_scroll_offset() / rows) as usize,
-        )
-    })
-    .get();
+    rustle::watched_state_of(move || list_row(scroll.offset(), rows).floor() as usize).get();
     rustle::untracked(|| viewer.top_row(columns, row))
 }
 

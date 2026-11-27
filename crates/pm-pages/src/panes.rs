@@ -21,7 +21,7 @@ use rustle::{
 use rustle::{Icon, phosphor};
 use std::rc::Rc;
 
-use crate::observed::region;
+use crate::observed::{quiet_region, region};
 use pm_components::Menu;
 use pm_components::Size;
 use pm_components::browser;
@@ -649,13 +649,19 @@ fn laid(
                 return;
             };
             *next += 1;
+            let room = (here.index, here.area, corner, extra, state.inner_sizes());
+            let page_free = !here.group.items.is_empty()
+                && !here
+                    .group
+                    .items
+                    .iter()
+                    .any(|item| matches!(item, Item::Page));
             rustle::key(here.index, || {
-                region(
-                    (here.index, here.area, corner, extra, state.inner_sizes()),
-                    || {
-                        pane(state, here, corner, extra);
-                    },
-                );
+                if page_free {
+                    quiet_region(room, || pane(state, here, corner, extra));
+                } else {
+                    region(room, || pane(state, here, corner, extra));
+                }
             });
         }
         Layout::Split {

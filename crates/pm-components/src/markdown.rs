@@ -890,7 +890,9 @@ fn chip(
     );
     rustle::InlineTextContent::new(room, move |code| {
         let code = code.to_owned();
-        rustle::disable_selection(|| chip_text(code, inline, pixels, strong, tone));
+        rustle::kept((code.clone(), inline, pixels, strong, tone), move || {
+            rustle::disable_selection(|| chip_text(code, inline, pixels, strong, tone));
+        });
     })
 }
 
