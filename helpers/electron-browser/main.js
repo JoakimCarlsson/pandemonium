@@ -9,6 +9,7 @@
 
 const { app, dialog } = require('electron');
 const net = require('net');
+const os = require('os');
 const path = require('path');
 const blocker = require('./src/blocker');
 const chrome = require('./src/chrome');
@@ -53,6 +54,9 @@ const profileFolder = argument('--profile');
 
 if (profileFolder) {
   app.setPath('userData', path.join(profileFolder, 'electron'));
+}
+if (process.platform === 'darwin') {
+  app.setPath('downloads', path.join(os.homedir(), 'Downloads'));
 }
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 app.commandLine.appendSwitch('disable-features', 'WaylandFractionalScaleV1');

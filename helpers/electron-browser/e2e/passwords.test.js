@@ -140,7 +140,7 @@ async function fillAda(helper) {
   await helper.until(1, `[document.getElementById('user').value, document.getElementById('pass').value]`, ['ada', 'secret-1']);
 }
 
-test('with the fallback key forced, logins are sealed by a primary password that a restart locks again', async () => {
+test('with the fallback key forced, logins are sealed by a primary password that a restart locks again', { skip: process.platform !== 'linux' && 'only Linux has a fallback key to force' }, async () => {
   const first = await start(['--password-store=basic']);
   /** @type {Record<string, string>} */
   const kept = {};

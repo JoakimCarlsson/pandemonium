@@ -60,7 +60,7 @@ function serve(request, response) {
       slow.now -= 1;
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end('<!doctype html><title>Slow</title><p>slow</p>');
-    }, 400);
+    }, 1000);
   } else {
     response.writeHead(404);
     response.end();
@@ -187,7 +187,7 @@ test('headless contexts run in parallel, never more than the limit at once', asy
   assert.equal(answer.value.length, 9);
   assert.ok(answer.value.every((/** @type {any} */ result) => result.ok && result.value === 'Slow'), JSON.stringify(answer.value));
   assert.equal(slow.most, 3);
-  assert.ok(Date.now() - started < 9 * 1400, 'the pages loaded side by side');
+  assert.ok(Date.now() - started < 9 * 1000, 'the pages loaded side by side');
 });
 
 test('a context shown in the pane asks the window for a tab in its profile', async () => {
