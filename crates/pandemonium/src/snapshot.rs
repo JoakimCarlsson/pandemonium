@@ -6596,7 +6596,7 @@ mod offer_tests {
 #[cfg(test)]
 mod performance_tests {
     use super::*;
-    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::alloc::{GlobalAlloc, Layout};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// The bytes handed out and not yet returned, and the bytes handed out in total.
@@ -6604,22 +6604,33 @@ mod performance_tests {
     /// The bytes handed out in total, never reduced.
     static TOTAL: AtomicUsize = AtomicUsize::new(0);
 
-    /// An allocator that counts what it hands out, so a benchmark can say where memory goes.
+    /// An allocator that counts what it hands out, so a benchmark can say where memory goes,
+    /// and hands it out from mimalloc, the program's own allocator, so benchmarks time what
+    /// the program does.
     struct Counting;
 
-    // SAFETY: every call is forwarded unchanged to the system allocator.
+    // SAFETY: every call is forwarded unchanged to mimalloc.
     unsafe impl GlobalAlloc for Counting {
-        /// Allocates from the system and counts the bytes.
+        /// Allocates from mimalloc and counts the bytes.
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
             LIVE.fetch_add(layout.size(), Ordering::Relaxed);
             TOTAL.fetch_add(layout.size(), Ordering::Relaxed);
-            unsafe { System.alloc(layout) }
+            unsafe { mimalloc::MiMalloc.alloc(layout) }
         }
 
-        /// Returns the memory to the system and counts the bytes back.
+        /// Returns the memory to mimalloc and counts the bytes back.
         unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
             LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
-            unsafe { System.dealloc(pointer, layout) }
+            unsafe { mimalloc::MiMalloc.dealloc(pointer, layout) }
+        }
+
+        /// Grows or shrinks in place where mimalloc can, as the program's allocator does,
+        /// and counts the difference.
+        unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+            LIVE.fetch_add(size, Ordering::Relaxed);
+            LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
+            TOTAL.fetch_add(size.saturating_sub(layout.size()), Ordering::Relaxed);
+            unsafe { mimalloc::MiMalloc.realloc(pointer, layout, size) }
         }
     }
 

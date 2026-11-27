@@ -18,6 +18,13 @@ use std::path::Path;
 use app::App;
 use snapshot::{Shot, Trigger};
 
+/// The allocator of the whole program: mimalloc, whose thread-local free lists make the
+/// small, short-lived allocations of composing, measuring and painting each frame several
+/// times cheaper than the system allocator's. The benchmarks count bytes through it too.
+#[cfg(not(test))]
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// Opens the window and runs rustle's event loop until it is closed, or, given `--version`, prints the version
 /// and leaves, or, given `--server`, runs the server
 /// on this machine with the options that follow, or, given

@@ -94,9 +94,25 @@ pub fn named() -> bool {
         .is_some_and(|path| path.is_file())
 }
 
-/// Whether the browser can be started.
+/// How long an answer of [`installed`] is taken as still true, so the window, which asks on
+/// every turn of its loop, looks at the disk a few times a second at most.
+const INSTALLED_KEPT: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Whether the browser can be started: whether [`helper`] finds the helper, as found in the
+/// last [`INSTALLED_KEPT`].
 pub fn installed() -> bool {
-    helper().is_some()
+    static KEPT: std::sync::Mutex<Option<(std::time::Instant, bool)>> = std::sync::Mutex::new(None);
+    let mut kept = KEPT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match *kept {
+        Some((at, found)) if at.elapsed() < INSTALLED_KEPT => found,
+        _ => {
+            let found = helper().is_some();
+            *kept = Some((std::time::Instant::now(), found));
+            found
+        }
+    }
 }
 
 /// The text at `source`, a folder or address the files are published in, with `name` after it.

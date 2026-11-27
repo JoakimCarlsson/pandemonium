@@ -62,16 +62,14 @@ pub fn provide<R>(screen: ScreenState, content: impl FnOnce() -> R) -> R {
     LOCAL_SCREEN.provide(Some(screen), content)
 }
 
-/// The generation of the screen being composed with that of its chrome, which moves on when
-/// streamed words or reading them change the sidebar or the title bar, when one that changes
-/// is provided; nothing for a screen shown once.
-pub(crate) fn chrome_generation() -> Option<(u64, u64)> {
-    LOCAL_SCREEN.current().map(|screen| {
-        (
-            screen.0.screen.with(|generation| *generation),
-            screen.0.chrome.with(|generation| *generation),
-        )
-    })
+/// Follows the generation of the screen being composed and that of its chrome, which moves
+/// on when streamed words or reading them change the sidebar or the title bar, so the caller
+/// composes again when either changes; nothing for a screen shown once.
+pub(crate) fn follow_chrome() {
+    if let Some(screen) = LOCAL_SCREEN.current() {
+        screen.0.screen.with(|_| ());
+        screen.0.chrome.with(|_| ());
+    }
 }
 
 /// Composes `content`, a region of the screen given the room `room` (the sizes it lays

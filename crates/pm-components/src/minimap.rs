@@ -9,7 +9,7 @@ use crate::theme;
 use pm_treesitter::Kind;
 use rustle::{Color, Modifier};
 
-use crate::marked::{CaretLook, Mark, Paint, marked_line};
+use crate::marked::{Mark, Paint};
 use crate::state::WorkspaceState;
 use crate::theme::Role;
 use crate::viewer::kind_role;
@@ -21,7 +21,7 @@ pub const WIDTH: f32 = 84.0;
 /// How tall a line of the minimap is, in logical pixels.
 const ROW: f32 = 3.0;
 
-/// How big the text its blocks are made from is, in logical pixels; its characters are about this wide.
+/// The size of code, in logical pixels, whose characters are as wide as a column of blocks.
 const FONT: f32 = 2.0;
 
 /// The most characters of a line the minimap draws.
@@ -90,8 +90,8 @@ impl Geometry {
     }
 }
 
-/// The blocks of the line `text`, whose highlighted stretches are `spans`, as marks over a text of as many spaces as the line has characters up to what the minimap holds, tabs taking `tab` of them.
-fn blocks(text: &str, spans: &[(std::ops::Range<usize>, Kind)], tab: usize) -> (usize, Vec<Mark>) {
+/// The blocks of the line `text`, whose highlighted stretches are `spans`, as marks over the columns of the line's characters up to what the minimap holds, tabs taking `tab` of them.
+fn blocks(text: &str, spans: &[(std::ops::Range<usize>, Kind)], tab: usize) -> Vec<Mark> {
     let mut roles: Vec<Option<Role>> = Vec::new();
     let mut column_of = Vec::with_capacity(text.len() + 1);
     for (at, character) in text.char_indices() {
@@ -133,17 +133,14 @@ fn blocks(text: &str, spans: &[(std::ops::Range<usize>, Kind)], tab: usize) -> (
         marks.push(Mark::new(start..end, role.alpha(INK), Paint::Fill));
         start = end;
     }
-    (roles.len(), marks)
+    marks
 }
 
 /// The highlighted stretches of a line, as offsets into it.
 type Spans = Vec<(std::ops::Range<usize>, Kind)>;
 
-/// The blocks of a line worked out last: for the line's text and the tab width they were worked out at, the highlights they were worked out from, and how many columns the line took with its blocks.
-type KeptBlocks = (String, usize, Spans, usize, Vec<Mark>);
-
-/// Spaces for the text of a row of the minimap, which a row takes a piece of.
-const SPACES: &str = "                                                                                                                                ";
+/// The blocks of a line worked out last: for the line's text and the tab width they were worked out at, the highlights they were worked out from, and its blocks.
+type KeptBlocks = (String, usize, Spans, Vec<Mark>);
 
 thread_local! {
     /// The blocks of the lines drawn last, by line, so that a line whose text and highlights did not change is not worked out again.
@@ -156,49 +153,52 @@ fn kept_blocks(
     document: &Document,
     index: usize,
     spans: &[(std::ops::Range<usize>, Kind)],
-) -> (usize, Vec<Mark>) {
+) -> Vec<Mark> {
     let text = &document.field.text()[document.line(index)];
     let tab = document.editing.indent;
     BLOCKS.with(|kept| {
         let mut kept = kept.borrow_mut();
-        if let Some((held_text, held_tab, held_spans, width, marks)) = kept.get(&index)
+        if let Some((held_text, held_tab, held_spans, marks)) = kept.get(&index)
             && held_text == text
             && *held_tab == tab
             && held_spans.as_slice() == spans
         {
-            return (*width, marks.clone());
+            return marks.clone();
         }
-        let (width, marks) = blocks(text, spans, tab);
+        let marks = blocks(text, spans, tab);
         if kept.len() > 4096 {
             kept.clear();
         }
-        kept.insert(
-            index,
-            (text.to_owned(), tab, spans.to_vec(), width, marks.clone()),
-        );
-        (width, marks)
+        kept.insert(index, (text.to_owned(), tab, spans.to_vec(), marks.clone()));
+        marks
     })
 }
 
-/// Emits the line at `index` of `document` as a row of the minimap.
-#[track_caller]
-fn row_of(document: &Document, index: usize, spans: &[(std::ops::Range<usize>, Kind)]) {
-    let (width, marks) = kept_blocks(document, index, spans);
-    let repeated;
-    let content = match SPACES.get(..width) {
-        Some(spaces) => spaces,
-        None => {
-            repeated = " ".repeat(width);
-            &repeated
-        }
-    };
-    marked_line(
-        Modifier::new().height(ROW),
-        content,
-        theme::code_style(FONT, ROW / FONT).color(theme::color(Color::TRANSPARENT)),
-        marks,
-        CaretLook::default(),
-    );
+/// One block of the minimap: where it starts across and down, how wide it is and its colour, in logical pixels from the top-left of the first row drawn.
+type Block = (f32, f32, f32, Color);
+
+/// The blocks of the lines `shown` of `document`, whose highlighted stretches are `spans` from line `low` on, each line a row [`ROW`] tall under the one before and each column `cell` wide.
+fn blocks_of(
+    document: &Document,
+    shown: &[usize],
+    low: usize,
+    spans: &[Spans],
+    cell: f32,
+) -> Vec<Block> {
+    let mut drawn = Vec::new();
+    for (row, index) in shown.iter().enumerate() {
+        let marks = kept_blocks(document, *index, &spans[index - low]);
+        let top = row as f32 * ROW;
+        drawn.extend(marks.into_iter().map(|mark| {
+            (
+                mark.range.start as f32 * cell,
+                top,
+                mark.range.len() as f32 * cell,
+                mark.tone,
+            )
+        }));
+    }
+    drawn
 }
 
 /// Emits the minimap of `document`, scrolled so row `top` is at the top of a view `view` tall whose rows are `row` tall and hold `columns` characters when lines wrap, drawn `height` logical pixels tall.
@@ -231,13 +231,14 @@ pub(crate) fn minimap(
             let own = events::pressed(own, Target::Editor(EditorEvent::Minimap))
                 .chain(crate::events::minimap_drag(height));
             rustle::stack_with(own, || {
-                rustle::column_arranged(
-                    Modifier::new().offset(0.0, first as f32 * ROW - geometry.offset),
-                    Arrangement::Start,
-                    Alignment::Start,
-                    || {
-                        for index in &shown {
-                            row_of(document, *index, &spans[index - low]);
+                let blocks = blocks_of(document, &shown, low, &spans, theme::code_cell(FONT));
+                rustle::canvas(
+                    Modifier::new()
+                        .fill_max_size()
+                        .offset(0.0, first as f32 * ROW - geometry.offset),
+                    move |canvas| {
+                        for &(x, y, width, color) in &blocks {
+                            canvas.rect(x, y, width, ROW, color);
                         }
                     },
                 );

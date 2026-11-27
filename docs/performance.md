@@ -155,6 +155,63 @@ streamed word composes and measures them again, and painting walks every node.
 The snapshot benchmarks below compose the screen from nothing each frame, so
 they measure a first frame, not the retained interface.
 
+## Frames within a native editor's budget
+
+`benchmark_interactions_resize` resizes the main window three pixels a frame
+both ways at once, as a desktop dragging its corner does, on the heavy
+workspace and on a huge file. It runs with the command above.
+
+What a sampling profile of every interaction benchmark found, and what
+changed:
+
+- The minimap emitted a line of marked text for each of its rows, a few
+  hundred text nodes measured and painted on every scrolled frame, with a
+  selection worked out per block. It now draws its blocks as rectangles on one
+  canvas. rustle works out selection rectangles without counting the
+  characters of clusters a selection covers whole.
+- The title bar and the sidebar were keyed by the screen's generation, which
+  every keystroke moves on, so typing composed both again. They are keyed by
+  their own state, compared by value; the workspace still follows the chrome's
+  generation, so a streamed word that changes them shows.
+- The window was laid out on each size the desktop sent, and again after
+  composing what the size changed. rustle now lays out once a frame, after
+  composing, however many sizes arrived.
+- Freeing the measured tree and display list a frame replaced was up to a
+  fifth of laying out. rustle drops them once the frame is handed to the GPU.
+- The window allocates through mimalloc, whose thread-local free lists make the
+  short-lived allocations of composing, measuring and painting cheaper than the
+  system allocator's. The benchmarks' counting allocator forwards to it, and
+  forwards growing in place, so they time what the window does.
+- Whether the browser helper is installed was looked up on disk, with the
+  program's own path read, several times every turn of the loop; the answer is
+  now kept for half a second.
+- rustle draws text from glyph atlases of its own: a shaped text keeps where
+  its glyphs are drawn and where they are in the atlas, so a frame copies them
+  instead of looking each glyph up. Frames come out the same to the pixel.
+
+Measured on the same machine (release profile, milliseconds, p50 / p95 of the
+whole turn; the window's GPU work is not in these):
+
+| Interaction | Before | After |
+| --- | --- | --- |
+| Drag the review panel's handle | 7.35 / 10.55 | 2.57 / 3.67 |
+| Drag a seam between panes | 4.07 / 6.76 | 2.14 / 2.50 |
+| Scroll the huge file, trackpad | 4.25 / 7.43 | 0.49 / 1.09 |
+| Scroll the huge file, flick | 4.40 / 11.54 | 1.28 / 1.75 |
+| Scroll the large file, flick | 3.86 / 4.71 | 1.54 / 2.48 |
+| Stream into the heavy workspace | 3.33 / 4.54 | 2.06 / 3.03 |
+| Stream into a long conversation | 2.32 / 3.22 | 1.34 / 1.72 |
+| Type into the prompt | 3.47 / 4.45 | 2.28 / 2.79 |
+| Type into a long prompt | 1.03 / 1.63 | 0.50 / 0.54 |
+| Resize the window, heavy workspace | 6.78 / 7.87 | 5.40 / 6.06 |
+| Resize the window, huge file | 3.22 / 3.97 | 2.34 / 2.88 |
+
+The huge file's flick missed 42 of 200 frames of a 120 Hz display before and
+none after. rustle's `frame` benchmark (`cargo bench -p rustle-bench --bench
+frame` in rustle) measures recording a frame and the GPU drawing it: a screen
+of highlighted code went from 0.90 ms to 0.12 ms a frame. Resizing still
+composes the panes again, because a pane is keyed by its size.
+
 ## Measure a running window
 
 ```sh

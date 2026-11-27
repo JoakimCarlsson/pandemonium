@@ -175,6 +175,31 @@ fn benchmark_interactions_scroll() {
     scroll.report("scroll under pointer");
 }
 
+/// Measures resizing the main window a few pixels a frame, both ways at once, as a
+/// desktop drags its corner, on the heavy workspace and on the huge file.
+#[test]
+#[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_interactions -- --ignored --nocapture --test-threads=1"]
+fn benchmark_interactions_resize() {
+    for (name, state) in [
+        ("resize window, heavy", crate::snapshot::heavy_workspace()),
+        ("resize window, huge code", crate::snapshot::huge_code()),
+    ] {
+        let mut rig = Rig::new(Screen::Workspace(state), SIZE);
+        let mut samples = Samples::default();
+        for step in 0..FRAMES {
+            let reach = if step < FRAMES / 2 {
+                step
+            } else {
+                FRAMES - step
+            } as f32
+                * 3.0;
+            let size = (SIZE.0 - reach, SIZE.1 - reach * 0.6);
+            samples.measure(&mut rig, |rig| rig.resize(size));
+        }
+        samples.report(name);
+    }
+}
+
 /// Measures typing into the prompt, a character a frame, on the heavy
 /// workspace and with a long prompt, a long conversation and both.
 #[test]
