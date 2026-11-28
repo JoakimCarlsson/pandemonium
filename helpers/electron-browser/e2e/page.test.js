@@ -195,16 +195,32 @@ test('alert, confirm and prompt are reported and take the reader\'s answers', as
   }
 });
 
+/**
+ * Right-clicks at `x`, `y` of page 1 until it reports a context menu, since a press that lands before the freshly
+ * loaded page takes input is lost.
+ * @param {number} x Logical pixels from the left.
+ * @param {number} y Logical pixels from the top.
+ * @returns {Promise<any>} The `ContextMenu` report.
+ * @throws {Error} When three presses brought no menu.
+ */
+async function menuAt(x, y) {
+  for (let tries = 1; ; tries += 1) {
+    const from = helper.mark();
+    click(1, x, y, 'Right');
+    try {
+      return await chromeReport(1, 'ContextMenu', from, undefined, 5000);
+    } catch (error) {
+      if (tries === 3) throw error;
+    }
+  }
+}
+
 test('a right click reports the menu with what is under the pointer', async () => {
   await helper.load(1, `${fixtures.main}/menu`);
-  let from = helper.mark();
-  click(1, 50, 20, 'Right');
-  const link = await chromeReport(1, 'ContextMenu', from);
+  const link = await menuAt(50, 20);
   assert.equal(link.link_url, `${fixtures.main}/target`);
   assert.equal(link.editable, false);
-  from = helper.mark();
-  click(1, 50, 115, 'Right');
-  const field = await chromeReport(1, 'ContextMenu', from);
+  const field = await menuAt(50, 115);
   assert.equal(field.editable, true);
   assert.equal(field.link_url, '');
 });

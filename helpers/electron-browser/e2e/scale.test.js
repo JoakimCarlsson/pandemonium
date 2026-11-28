@@ -187,6 +187,7 @@ test('an adopted popup renders at device size, also zoomed past the engine and w
     await paintedAt(5, 600, 400, 'popup-scale-2');
     click(5, 250, 150);
     await helper.until(5, 'window.pressed', [250, 150]);
+    await helper.until(5, '[window.cross.ratio, window.cross.width]', [2, 200]);
     click(5, 50, 30);
     await helper.until(5, 'window.cross.pressed', [50, 30]);
     await zoomTo(5, 5);
