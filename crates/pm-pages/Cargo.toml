@@ -13,7 +13,7 @@ pm-git.workspace = true
 pm-protocol.workspace = true
 pm-terminal.workspace = true
 pm-vim.workspace = true
-rustle = { git = "https://github.com/JoakimCarlsson/rustle", tag = "0.1.3" }
+rustle = { git = "https://github.com/JoakimCarlsson/rustle", tag = "0.1.4" }
 
 [dev-dependencies]
 pm-store = { workspace = true, features = ["scratch-folders"] }
